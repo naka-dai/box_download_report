@@ -53,8 +53,11 @@ def generate_dashboard():
     cursor.execute(f'SELECT COUNT(*) FROM downloads WHERE event_type = "PREVIEW" AND user_login NOT IN ({placeholders})', admin_params)
     total_previews = cursor.fetchone()[0]
 
-    cursor.execute(f'SELECT COUNT(DISTINCT user_login) FROM downloads WHERE user_login NOT IN ({placeholders})', admin_params)
-    unique_users = cursor.fetchone()[0]
+    cursor.execute(f'SELECT COUNT(DISTINCT user_login) FROM downloads WHERE event_type = "DOWNLOAD" AND user_login NOT IN ({placeholders})', admin_params)
+    unique_users_download = cursor.fetchone()[0]
+
+    cursor.execute(f'SELECT COUNT(DISTINCT user_login) FROM downloads WHERE event_type = "PREVIEW" AND user_login NOT IN ({placeholders})', admin_params)
+    unique_users_preview = cursor.fetchone()[0]
 
     cursor.execute(f'SELECT COUNT(DISTINCT file_id) FROM downloads WHERE user_login NOT IN ({placeholders})', admin_params)
     unique_files = cursor.fetchone()[0]
@@ -342,7 +345,7 @@ def generate_dashboard():
 
         .stats-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 20px;
             margin-bottom: 30px;
         }}
@@ -710,9 +713,13 @@ def generate_dashboard():
                 <h3>総アクセス数</h3>
                 <div class="value">{total_downloads + total_previews:,}</div>
             </div>
-            <div class="stat-card">
-                <h3>ユニークユーザー</h3>
-                <div class="value">{unique_users}</div>
+            <div class="stat-card download">
+                <h3>DLユニークユーザー</h3>
+                <div class="value">{unique_users_download}</div>
+            </div>
+            <div class="stat-card preview">
+                <h3>PVユニークユーザー</h3>
+                <div class="value">{unique_users_preview}</div>
             </div>
             <div class="stat-card">
                 <h3>アクセスファイル数</h3>
