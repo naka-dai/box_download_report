@@ -584,10 +584,10 @@ def generate_dashboard():
                     📊 統合レポート
                 </button>
                 <button class="tab-btn download" onclick="switchTab('download')">
-                    📥 ダウンロード専用
+                    📥 ダウンロードのみ集計
                 </button>
                 <button class="tab-btn preview" onclick="switchTab('preview')">
-                    👁️ プレビュー専用
+                    👁️ プレビューのみ集計
                 </button>
             </div>
         </div>

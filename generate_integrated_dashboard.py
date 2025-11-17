@@ -699,8 +699,8 @@ def generate_dashboard():
                 期間: {min_date} ～ {max_date}
             </p>
             <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
-                <a href="dashboard.html" style="padding: 8px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-size: 0.9em; transition: background 0.3s;">📥 ダウンロード専用</a>
-                <a href="dashboard_preview.html" style="padding: 8px 20px; background: #FF9800; color: white; text-decoration: none; border-radius: 5px; font-size: 0.9em; transition: background 0.3s;">👁️ プレビュー専用</a>
+                <a href="dashboard.html" style="padding: 8px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-size: 0.9em; transition: background 0.3s;">📥 ダウンロードのみ集計</a>
+                <a href="dashboard_preview.html" style="padding: 8px 20px; background: #FF9800; color: white; text-decoration: none; border-radius: 5px; font-size: 0.9em; transition: background 0.3s;">👁️ プレビューのみ集計</a>
             </div>
         </div>
 

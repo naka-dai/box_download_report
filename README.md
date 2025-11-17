@@ -124,8 +124,8 @@ python generate_allinone_dashboard.py
 
 1つのHTMLファイルで3つのダッシュボードをタブ切り替えで表示:
 - **統合タブ**: ダウンロード＋プレビュー統合分析
-- **ダウンロードタブ**: ダウンロード専用分析
-- **プレビュータブ**: プレビュー専用分析
+- **ダウンロードタブ**: ダウンロードのみ集計
+- **プレビュータブ**: プレビューのみ集計
 
 各タブ共通機能:
 - 月別推移グラフ（クリックで詳細モーダル表示）
@@ -151,7 +151,7 @@ python generate_integrated_dashboard.py
 - トップユーザー（ダウンロード/プレビュー別表示）
 - トップファイル（ダウンロード/プレビュー別表示）
 
-#### ダウンロード専用ダッシュボード
+#### ダウンロードのみ集計ダッシュボード
 
 ```bash
 python generate_dashboard_v2.py
@@ -159,7 +159,7 @@ python generate_dashboard_v2.py
 
 生成されたダッシュボード: `data/dashboard.html`
 
-#### プレビュー専用ダッシュボード
+#### プレビューのみ集計ダッシュボード
 
 ```bash
 python generate_preview_dashboard.py
@@ -217,9 +217,10 @@ pyinstaller --onefile --name box_download_batch main.py
 ### ダッシュボード（HTML）
 
 - `data/dashboard_allinone.html`: オールインワンダッシュボード（タブ切り替えで3つのビューを表示）
+- `data/dashboard_allinone_full.html`: オールインワンダッシュボード完全版（全リッチUI機能搭載、37MB）
 - `data/dashboard_integrated.html`: 統合ダッシュボード（ダウンロード＋プレビュー）
-- `data/dashboard.html`: ダウンロード専用ダッシュボード
-- `data/dashboard_preview.html`: プレビュー専用ダッシュボード
+- `data/dashboard.html`: ダウンロードのみ集計ダッシュボード
+- `data/dashboard_preview.html`: プレビューのみ集計ダッシュボード
 
 ## データベース構造
 

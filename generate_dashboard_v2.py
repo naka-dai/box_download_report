@@ -593,14 +593,14 @@ def generate_dashboard():
 <body>
     <div class="container">
         <div class="header">
-            <h1>📊 Box ダウンロードレポート</h1>
+            <h1>📊 Box ダウンロードのみ集計</h1>
             <p>図面001フォルダ ダウンロード分析ダッシュボード</p>
             <p style="font-size: 0.9em; color: #999; margin-top: 10px;">
                 期間: {min_date} ～ {max_date}
             </p>
             <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
                 <a href="dashboard_integrated.html" style="padding: 8px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; font-size: 0.9em; transition: background 0.3s;">📊 統合レポート</a>
-                <a href="dashboard_preview.html" style="padding: 8px 20px; background: #FF9800; color: white; text-decoration: none; border-radius: 5px; font-size: 0.9em; transition: background 0.3s;">👁️ プレビュー専用</a>
+                <a href="dashboard_preview.html" style="padding: 8px 20px; background: #FF9800; color: white; text-decoration: none; border-radius: 5px; font-size: 0.9em; transition: background 0.3s;">👁️ プレビューのみ集計</a>
             </div>
         </div>
 
