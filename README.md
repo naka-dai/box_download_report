@@ -114,7 +114,28 @@ python main.py
 
 ### ダッシュボード生成
 
-#### 統合ダッシュボード（推奨）
+#### オールインワンダッシュボード（推奨）
+
+```bash
+python generate_allinone_dashboard.py
+```
+
+生成されたダッシュボード: `data/dashboard_allinone.html`
+
+1つのHTMLファイルで3つのダッシュボードをタブ切り替えで表示:
+- **統合タブ**: ダウンロード＋プレビュー統合分析
+- **ダウンロードタブ**: ダウンロード専用分析
+- **プレビュータブ**: プレビュー専用分析
+
+各タブ共通機能:
+- 月別推移グラフ（クリックで詳細モーダル表示）
+- 日別推移グラフ（直近30日）
+- 時間帯別グラフ（24時間分布）
+- トップユーザーテーブル（トップ10/全員切り替え可能）
+- トップファイルテーブル（ユーザー詳細ツールチップ表示）
+- 完全オフライン動作（Chart.js組み込み）
+
+#### 統合ダッシュボード
 
 ```bash
 python generate_integrated_dashboard.py
@@ -195,6 +216,7 @@ pyinstaller --onefile --name box_download_batch main.py
 
 ### ダッシュボード（HTML）
 
+- `data/dashboard_allinone.html`: オールインワンダッシュボード（タブ切り替えで3つのビューを表示）
 - `data/dashboard_integrated.html`: 統合ダッシュボード（ダウンロード＋プレビュー）
 - `data/dashboard.html`: ダウンロード専用ダッシュボード
 - `data/dashboard_preview.html`: プレビュー専用ダッシュボード
