@@ -1,6 +1,12 @@
 """
-Generate Integrated Dashboard
+Generate Integrated Dashboard v2
 ダウンロードとプレビューを統合したダッシュボードを生成
+改善点:
+- 月別グラフクリックで詳細モーダル表示
+- 日別/時間帯別グラフにユーザー内訳ツールチップ
+- トップユーザーテーブルにトグル機能
+- トップファイルにユーザー詳細ツールチップ
+- 重複率の表示
 """
 
 import sqlite3
@@ -69,22 +75,47 @@ def generate_dashboard():
     ''', admin_params)
     monthly_data = cursor.fetchall()
 
-    # Get daily statistics for both types (last 30 days)
-    cursor.execute(f'''
-        SELECT
-            DATE(download_at_jst) as date,
-            SUM(CASE WHEN event_type = "DOWNLOAD" THEN 1 ELSE 0 END) as download_count,
-            SUM(CASE WHEN event_type = "PREVIEW" THEN 1 ELSE 0 END) as preview_count
-        FROM downloads
-        WHERE user_login NOT IN ({placeholders})
-        GROUP BY DATE(download_at_jst)
-        ORDER BY date DESC
-        LIMIT 30
-    ''', admin_params)
-    daily_data = list(reversed(cursor.fetchall()))
+    # Get detailed monthly breakdown for drill-down
+    monthly_details = {}
+    for month, _, _ in monthly_data:
+        cursor.execute(f'''
+            SELECT
+                user_name,
+                user_login,
+                file_name,
+                download_at_jst,
+                event_type,
+                raw_json
+            FROM downloads
+            WHERE user_login NOT IN ({placeholders})
+              AND strftime('%Y-%m', download_at_jst) = ?
+            ORDER BY download_at_jst DESC
+        ''', admin_params + (month,))
 
-    # Get hourly statistics for both types
-    cursor.execute(f'''
+        details = []
+        for user_name, user_login, file_name, download_at, event_type, raw_json in cursor.fetchall():
+            parent_folder = ''
+            if raw_json:
+                try:
+                    data = json.loads(raw_json)
+                    parent_folder = data.get('parent_folder', '')
+                except:
+                    pass
+
+            details.append({
+                'user_name': user_name,
+                'user_login': user_login,
+                'file_name': file_name,
+                'parent_folder': parent_folder,
+                'download_at': download_at,
+                'event_type': event_type
+            })
+
+        monthly_details[month] = details
+
+    # Get hourly statistics with user breakdown
+    hourly_data_with_users = []
+    for hour, dl_count, pv_count in cursor.execute(f'''
         SELECT
             CAST(strftime('%H', download_at_jst) AS INTEGER) as hour,
             SUM(CASE WHEN event_type = "DOWNLOAD" THEN 1 ELSE 0 END) as download_count,
@@ -93,10 +124,56 @@ def generate_dashboard():
         WHERE user_login NOT IN ({placeholders})
         GROUP BY hour
         ORDER BY hour
-    ''', admin_params)
-    hourly_data = cursor.fetchall()
+    ''', admin_params).fetchall():
+        # Get user breakdown for this hour (both DL and PV)
+        cursor.execute(f'''
+            SELECT
+                user_name,
+                SUM(CASE WHEN event_type = "DOWNLOAD" THEN 1 ELSE 0 END) as dl_count,
+                SUM(CASE WHEN event_type = "PREVIEW" THEN 1 ELSE 0 END) as pv_count,
+                COUNT(*) as total
+            FROM downloads
+            WHERE CAST(strftime('%H', download_at_jst) AS INTEGER) = ? AND user_login NOT IN ({placeholders})
+            GROUP BY user_name
+            ORDER BY total DESC
+        ''', (hour,) + admin_params)
+        user_breakdown = cursor.fetchall()
+        hourly_data_with_users.append((hour, dl_count, pv_count, user_breakdown))
 
-    # Get top users by total activity (download + preview)
+    # Get daily statistics with user breakdown (last 30 days)
+    cursor.execute(f'''
+        SELECT
+            DATE(download_at_jst) as date,
+            SUM(CASE WHEN event_type = "DOWNLOAD" THEN 1 ELSE 0 END) as download_count,
+            SUM(CASE WHEN event_type = "PREVIEW" THEN 1 ELSE 0 END) as preview_count,
+            COUNT(DISTINCT user_login) as unique_users
+        FROM downloads
+        WHERE user_login NOT IN ({placeholders})
+        GROUP BY DATE(download_at_jst)
+        ORDER BY date DESC
+        LIMIT 30
+    ''', admin_params)
+    daily_data_raw = list(reversed(cursor.fetchall()))
+
+    # Process daily data to get detailed user breakdown
+    daily_data_with_users = []
+    for date, dl_count, pv_count, unique_users_count in daily_data_raw:
+        # Get detailed breakdown for this date
+        cursor.execute(f'''
+            SELECT
+                user_name,
+                SUM(CASE WHEN event_type = "DOWNLOAD" THEN 1 ELSE 0 END) as dl_count,
+                SUM(CASE WHEN event_type = "PREVIEW" THEN 1 ELSE 0 END) as pv_count,
+                COUNT(*) as total
+            FROM downloads
+            WHERE DATE(download_at_jst) = ? AND user_login NOT IN ({placeholders})
+            GROUP BY user_name
+            ORDER BY total DESC
+        ''', (date,) + admin_params)
+        user_breakdown = cursor.fetchall()
+        daily_data_with_users.append((date, dl_count, pv_count, unique_users_count, user_breakdown))
+
+    # Get all users by total activity (to support top 10 / all switching)
     cursor.execute(f'''
         SELECT
             user_name,
@@ -109,11 +186,11 @@ def generate_dashboard():
         WHERE user_login NOT IN ({placeholders})
         GROUP BY user_login
         ORDER BY total_count DESC
-        LIMIT 10
     ''', admin_params)
     top_users = cursor.fetchall()
+    total_user_count = len(top_users)
 
-    # Get top files by total activity
+    # Get top files by total activity with user details
     cursor.execute(f'''
         SELECT
             file_id,
@@ -131,9 +208,19 @@ def generate_dashboard():
     ''', admin_params)
     top_files_raw = cursor.fetchall()
 
-    # Get folder information for top files
-    top_files = []
-    for file_id, file_name, raw_json, dl_count, pv_count, total, users in top_files_raw:
+    # Get user names for each top file
+    top_files_with_users = []
+    for file_id, file_name, raw_json, dl_count, pv_count, total, unique_users_count in top_files_raw:
+        # Get users who accessed this file
+        cursor.execute(f'''
+            SELECT DISTINCT user_name, user_login
+            FROM downloads
+            WHERE file_id = ? AND user_login NOT IN ({placeholders})
+            ORDER BY user_name
+        ''', (file_id,) + admin_params)
+        users = cursor.fetchall()
+        user_names = [f"{name} ({email})" for name, email in users]
+
         folder = ''
         if raw_json:
             try:
@@ -141,18 +228,8 @@ def generate_dashboard():
                 folder = data.get('parent_folder', '')
             except:
                 pass
-        top_files.append((file_name, folder, dl_count, pv_count, total, users))
 
-    # Get event type distribution
-    cursor.execute(f'''
-        SELECT
-            event_type,
-            COUNT(*) as count
-        FROM downloads
-        WHERE user_login NOT IN ({placeholders})
-        GROUP BY event_type
-    ''', admin_params)
-    event_distribution = cursor.fetchall()
+        top_files_with_users.append((file_name, folder, dl_count, pv_count, total, unique_users_count, user_names))
 
     conn.close()
 
@@ -161,13 +238,54 @@ def generate_dashboard():
     monthly_downloads = [row[1] for row in monthly_data]
     monthly_previews = [row[2] for row in monthly_data]
 
-    daily_labels = [row[0] for row in daily_data]
-    daily_downloads = [row[1] for row in daily_data]
-    daily_previews = [row[2] for row in daily_data]
+    # Build tooltip data for hourly chart
+    hourly_labels = [f"{row[0]:02d}:00" for row in hourly_data_with_users]
+    hourly_downloads = [row[1] for row in hourly_data_with_users]
+    hourly_previews = [row[2] for row in hourly_data_with_users]
 
-    hourly_labels = [f"{row[0]:02d}:00" for row in hourly_data]
-    hourly_downloads = [row[1] for row in hourly_data]
-    hourly_previews = [row[2] for row in hourly_data]
+    hourly_tooltips = []
+    for hour, dl_count, pv_count, user_breakdown in hourly_data_with_users:
+        tooltip_data = {
+            'hour': f"{hour:02d}:00",
+            'dl_count': dl_count,
+            'pv_count': pv_count,
+            'users': []
+        }
+        for user_name, user_dl, user_pv, user_total in user_breakdown[:5]:  # Top 5 users
+            tooltip_data['users'].append({
+                'name': user_name,
+                'dl': user_dl,
+                'pv': user_pv,
+                'total': user_total
+            })
+        if len(user_breakdown) > 5:
+            tooltip_data['more'] = len(user_breakdown) - 5
+        hourly_tooltips.append(tooltip_data)
+
+    # Build tooltip data for daily chart
+    daily_labels = [row[0] for row in daily_data_with_users]
+    daily_downloads = [row[1] for row in daily_data_with_users]
+    daily_previews = [row[2] for row in daily_data_with_users]
+
+    daily_tooltips = []
+    for date, dl_count, pv_count, unique_users_count, user_breakdown in daily_data_with_users:
+        tooltip_data = {
+            'date': date,
+            'dl_count': dl_count,
+            'pv_count': pv_count,
+            'unique_users': unique_users_count,
+            'users': []
+        }
+        for user_name, user_dl, user_pv, user_total in user_breakdown[:5]:  # Top 5 users
+            tooltip_data['users'].append({
+                'name': user_name,
+                'dl': user_dl,
+                'pv': user_pv,
+                'total': user_total
+            })
+        if len(user_breakdown) > 5:
+            tooltip_data['more'] = len(user_breakdown) - 5
+        daily_tooltips.append(tooltip_data)
 
     # Calculate download/preview ratio
     download_ratio = (total_downloads / (total_downloads + total_previews) * 100) if (total_downloads + total_previews) > 0 else 0
@@ -299,6 +417,10 @@ def generate_dashboard():
             height: 300px;
         }}
 
+        .chart-card canvas {{
+            cursor: pointer;
+        }}
+
         .table-card {{
             background: white;
             padding: 25px;
@@ -366,6 +488,38 @@ def generate_dashboard():
             color: white;
         }}
 
+        .user-count {{
+            cursor: help;
+            color: #667eea;
+            font-weight: bold;
+            position: relative;
+        }}
+
+        .user-count:hover {{
+            text-decoration: underline;
+        }}
+
+        .tooltip {{
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 0.85em;
+            line-height: 1.6;
+            z-index: 1000;
+            white-space: nowrap;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            max-width: 400px;
+            white-space: normal;
+        }}
+
+        .tooltip.show {{
+            opacity: 1;
+        }}
+
         .footer {{
             text-align: center;
             color: white;
@@ -399,6 +553,137 @@ def generate_dashboard():
 
         .legend-color.preview {{
             background: #FF9800;
+        }}
+
+        /* Modal styles */
+        .modal {{
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            overflow: auto;
+        }}
+
+        .modal-content {{
+            background-color: white;
+            margin: 50px auto;
+            padding: 0;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 1200px;
+            max-height: 85vh;
+            box-shadow: 0 10px 50px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+        }}
+
+        .modal-header {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px 30px;
+            border-radius: 15px 15px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+
+        .modal-header h2 {{
+            margin: 0;
+            font-size: 1.8em;
+        }}
+
+        .close-btn {{
+            color: white;
+            font-size: 32px;
+            font-weight: bold;
+            cursor: pointer;
+            background: none;
+            border: none;
+            padding: 0;
+            width: 40px;
+            height: 40px;
+            line-height: 32px;
+            text-align: center;
+            border-radius: 50%;
+            transition: background 0.3s;
+        }}
+
+        .close-btn:hover {{
+            background: rgba(255, 255, 255, 0.2);
+        }}
+
+        .modal-body {{
+            padding: 30px;
+            overflow-y: auto;
+            flex: 1;
+        }}
+
+        .detail-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }}
+
+        .detail-table th {{
+            background: #f8f9fa;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #667eea;
+            border-bottom: 2px solid #667eea;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }}
+
+        .detail-table td {{
+            padding: 12px;
+            border-bottom: 1px solid #e9ecef;
+        }}
+
+        .detail-table tr:hover {{
+            background: #f8f9fa;
+        }}
+
+        /* Toggle buttons */
+        .toggle-buttons {{
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            justify-content: flex-end;
+        }}
+
+        .toggle-btn {{
+            padding: 8px 16px;
+            border: 2px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 600;
+            transition: all 0.3s;
+        }}
+
+        .toggle-btn:hover {{
+            background: #f0f0ff;
+        }}
+
+        .toggle-btn.active {{
+            background: #667eea;
+            color: white;
+        }}
+
+        .user-row {{
+            display: none;
+        }}
+
+        .user-row.show {{
+            display: table-row;
         }}
     </style>
 </head>
@@ -455,6 +740,9 @@ def generate_dashboard():
                         <span>プレビュー</span>
                     </div>
                 </div>
+                <p style="text-align: center; color: #999; font-size: 0.85em; margin-top: 10px;">
+                    クリックで詳細表示
+                </p>
             </div>
 
             <div class="chart-card">
@@ -493,7 +781,13 @@ def generate_dashboard():
         </div>
 
         <div class="table-card">
-            <h2>👥 トップ10ユーザー（総アクセス数）</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2>👥 トップユーザー（総アクセス数）</h2>
+                <div class="toggle-buttons">
+                    <button class="toggle-btn active" onclick="showTopUsers(10)">トップ10</button>
+                    <button class="toggle-btn" onclick="showTopUsers({total_user_count})">すべて ({total_user_count}人)</button>
+                </div>
+            </div>
             <table>
                 <thead>
                     <tr>
@@ -504,13 +798,17 @@ def generate_dashboard():
                         <th style="text-align: right;">プレビュー</th>
                         <th style="text-align: right;">合計</th>
                         <th style="text-align: right;">ファイル数</th>
+                        <th style="text-align: right;">重複率</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="topUsersTable">
 '''
 
     for i, (name, email, dl_count, pv_count, total, files) in enumerate(top_users, 1):
-        html += f'''                    <tr>
+        duplication_rate = ((total - files) / total * 100) if total > 0 else 0
+        show_class = 'show' if i <= 10 else ''
+
+        html += f'''                    <tr class="user-row {show_class}" data-rank="{i}">
                         <td><span class="rank">{i}</span></td>
                         <td>{name}</td>
                         <td>{email}</td>
@@ -518,6 +816,7 @@ def generate_dashboard():
                         <td style="text-align: right;"><span class="badge preview">{pv_count:,}</span></td>
                         <td style="text-align: right; font-weight: bold;">{total:,}</td>
                         <td style="text-align: right;">{files:,}</td>
+                        <td style="text-align: right; color: {"#e74c3c" if duplication_rate > 30 else "#27ae60"};">{duplication_rate:.1f}%</td>
                     </tr>
 '''
 
@@ -542,7 +841,8 @@ def generate_dashboard():
                 <tbody>
 '''
 
-    for i, (file_name, folder, dl_count, pv_count, total, users) in enumerate(top_files, 1):
+    for i, (file_name, folder, dl_count, pv_count, total, users, user_names) in enumerate(top_files_with_users, 1):
+        users_json = json.dumps(user_names, ensure_ascii=False)
         html += f'''                    <tr>
                         <td><span class="rank">{i}</span></td>
                         <td>{file_name}</td>
@@ -550,7 +850,9 @@ def generate_dashboard():
                         <td style="text-align: right;"><span class="badge download">{dl_count:,}</span></td>
                         <td style="text-align: right;"><span class="badge preview">{pv_count:,}</span></td>
                         <td style="text-align: right; font-weight: bold;">{total:,}</td>
-                        <td style="text-align: right;">{users}</td>
+                        <td style="text-align: right;">
+                            <span class="user-count" data-users='{users_json}'>{users}</span>
+                        </td>
                     </tr>
 '''
 
@@ -566,8 +868,141 @@ def generate_dashboard():
         </div>
     </div>
 
+    <div id="tooltip" class="tooltip"></div>
+
+    <!-- Monthly Details Modal -->
+    <div id="monthModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">月別アクセス詳細</h2>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="modalContent"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
-        // Monthly Chart
+        // Monthly details data
+        const monthlyDetails = {json.dumps(monthly_details, ensure_ascii=False, indent=2)};
+
+        // Modal functions
+        function showMonthDetails(month) {{
+            const modal = document.getElementById('monthModal');
+            const modalTitle = document.getElementById('modalTitle');
+            const modalContent = document.getElementById('modalContent');
+
+            const details = monthlyDetails[month];
+            if (!details || details.length === 0) {{
+                return;
+            }}
+
+            modalTitle.textContent = `${{month}} アクセス詳細 (${{details.length}}件)`;
+
+            let tableHTML = `
+                <table class="detail-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">#</th>
+                            <th style="width: 100px;">操作</th>
+                            <th style="width: 150px;">ユーザー名</th>
+                            <th style="width: 200px;">メールアドレス</th>
+                            <th>ファイル名</th>
+                            <th style="width: 250px;">フォルダ</th>
+                            <th style="width: 150px;">日時</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            details.forEach((item, index) => {{
+                const eventBadge = item.event_type === 'DOWNLOAD'
+                    ? '<span class="badge download">DL</span>'
+                    : '<span class="badge preview">PV</span>';
+
+                tableHTML += `
+                    <tr>
+                        <td>${{index + 1}}</td>
+                        <td>${{eventBadge}}</td>
+                        <td>${{item.user_name}}</td>
+                        <td style="font-size: 0.85em;">${{item.user_login}}</td>
+                        <td>${{item.file_name}}</td>
+                        <td style="font-size: 0.85em; color: #666;">${{item.parent_folder || '-'}}</td>
+                        <td style="font-size: 0.85em;">${{item.download_at.split('T').join(' ')}}</td>
+                    </tr>
+                `;
+            }});
+
+            tableHTML += `
+                    </tbody>
+                </table>
+            `;
+
+            modalContent.innerHTML = tableHTML;
+            modal.style.display = 'block';
+        }}
+
+        function closeModal() {{
+            const modal = document.getElementById('monthModal');
+            modal.style.display = 'none';
+        }}
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {{
+            const modal = document.getElementById('monthModal');
+            if (event.target === modal) {{
+                closeModal();
+            }}
+        }};
+
+        // Close modal with ESC key
+        document.addEventListener('keydown', function(event) {{
+            if (event.key === 'Escape') {{
+                closeModal();
+            }}
+        }});
+
+        // Toggle top users display
+        function showTopUsers(limit) {{
+            // Update button states
+            document.querySelectorAll('.toggle-btn').forEach(btn => {{
+                btn.classList.remove('active');
+            }});
+            event.target.classList.add('active');
+
+            // Show/hide rows based on limit
+            const rows = document.querySelectorAll('.user-row');
+            rows.forEach(row => {{
+                const rank = parseInt(row.getAttribute('data-rank'));
+                if (rank <= limit) {{
+                    row.classList.add('show');
+                }} else {{
+                    row.classList.remove('show');
+                }}
+            }});
+        }}
+
+        // Tooltip for user count
+        const tooltip = document.getElementById('tooltip');
+        document.querySelectorAll('.user-count').forEach(element => {{
+            element.addEventListener('mouseenter', (e) => {{
+                const users = JSON.parse(element.getAttribute('data-users'));
+                tooltip.innerHTML = '<strong>アクセスユーザー:</strong><br>' + users.join('<br>');
+                tooltip.classList.add('show');
+            }});
+
+            element.addEventListener('mousemove', (e) => {{
+                tooltip.style.left = (e.pageX + 15) + 'px';
+                tooltip.style.top = (e.pageY + 15) + 'px';
+            }});
+
+            element.addEventListener('mouseleave', () => {{
+                tooltip.classList.remove('show');
+            }});
+        }});
+
+        // Monthly Chart with click event
         const monthlyCtx = document.getElementById('monthlyChart').getContext('2d');
         new Chart(monthlyCtx, {{
             type: 'bar',
@@ -593,9 +1028,23 @@ def generate_dashboard():
             options: {{
                 responsive: true,
                 maintainAspectRatio: false,
+                onClick: (event, activeElements) => {{
+                    if (activeElements.length > 0) {{
+                        const index = activeElements[0].index;
+                        const month = {json.dumps(monthly_labels)}[index];
+                        showMonthDetails(month);
+                    }}
+                }},
                 plugins: {{
                     legend: {{
                         display: false
+                    }},
+                    tooltip: {{
+                        callbacks: {{
+                            footer: function() {{
+                                return 'クリックで詳細表示';
+                            }}
+                        }}
                     }}
                 }},
                 scales: {{
@@ -620,8 +1069,44 @@ def generate_dashboard():
             }}
         }});
 
-        // Daily Chart
+        // Daily Chart with custom tooltips
         const dailyCtx = document.getElementById('dailyChart').getContext('2d');
+        const dailyTooltips = {json.dumps(daily_tooltips)};
+
+        // Register custom positioner for adaptive tooltip placement
+        Chart.Tooltip.positioners.adaptive = function(elements, eventPosition) {{
+            if (!elements.length) {{
+                return false;
+            }}
+
+            const element = elements[0];
+            const chart = this.chart;
+            const chartArea = chart.chartArea;
+            const pointY = element.element.y;
+            const chartHeight = chartArea.bottom - chartArea.top;
+            const midPoint = chartArea.top + (chartHeight / 2);
+
+            // Calculate tooltip position
+            const x = element.element.x;
+            let y = element.element.y;
+
+            // Adjust y position based on point location
+            if (pointY > midPoint) {{
+                // Point is in lower half, show tooltip above
+                y = pointY - 10;
+            }} else {{
+                // Point is in upper half, show tooltip below
+                y = pointY + 10;
+            }}
+
+            return {{
+                x: x,
+                y: y,
+                xAlign: 'center',
+                yAlign: pointY > midPoint ? 'bottom' : 'top'
+            }};
+        }};
+
         new Chart(dailyCtx, {{
             type: 'line',
             data: {{
@@ -653,6 +1138,44 @@ def generate_dashboard():
                 plugins: {{
                     legend: {{
                         display: false
+                    }},
+                    tooltip: {{
+                        position: 'adaptive',
+                        callbacks: {{
+                            title: function(context) {{
+                                const data = dailyTooltips[context[0].dataIndex];
+                                return data.date;
+                            }},
+                            beforeBody: function(context) {{
+                                const data = dailyTooltips[context[0].dataIndex];
+                                return `DL: ${{data.dl_count}}件 / PV: ${{data.pv_count}}件 (${{data.unique_users}}人)`;
+                            }},
+                            label: function(context) {{
+                                const data = dailyTooltips[context.dataIndex];
+                                const labels = [];
+
+                                if (data.users && data.users.length > 0) {{
+                                    labels.push(''); // Empty line
+                                    data.users.forEach(user => {{
+                                        labels.push(`${{user.name}}: DL ${{user.dl}}件 / PV ${{user.pv}}件`);
+                                    }});
+
+                                    if (data.more) {{
+                                        labels.push(`...他${{data.more}}人`);
+                                    }}
+                                }}
+
+                                return labels;
+                            }}
+                        }},
+                        bodyFont: {{
+                            size: 12
+                        }},
+                        padding: 12,
+                        displayColors: false,
+                        backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                        borderColor: 'rgba(102, 126, 234, 0.8)',
+                        borderWidth: 2
                     }}
                 }},
                 scales: {{
@@ -673,12 +1196,18 @@ def generate_dashboard():
                             minRotation: 45
                         }}
                     }}
+                }},
+                interaction: {{
+                    mode: 'nearest',
+                    intersect: false
                 }}
             }}
         }});
 
-        // Hourly Chart
+        // Hourly Chart with custom tooltips
         const hourlyCtx = document.getElementById('hourlyChart').getContext('2d');
+        const hourlyTooltips = {json.dumps(hourly_tooltips)};
+
         new Chart(hourlyCtx, {{
             type: 'bar',
             data: {{
@@ -706,6 +1235,43 @@ def generate_dashboard():
                 plugins: {{
                     legend: {{
                         display: false
+                    }},
+                    tooltip: {{
+                        callbacks: {{
+                            title: function(context) {{
+                                const data = hourlyTooltips[context[0].dataIndex];
+                                return data.hour;
+                            }},
+                            beforeBody: function(context) {{
+                                const data = hourlyTooltips[context[0].dataIndex];
+                                return `DL: ${{data.dl_count}}件 / PV: ${{data.pv_count}}件`;
+                            }},
+                            label: function(context) {{
+                                const data = hourlyTooltips[context.dataIndex];
+                                const labels = [];
+
+                                if (data.users && data.users.length > 0) {{
+                                    labels.push(''); // Empty line
+                                    data.users.forEach(user => {{
+                                        labels.push(`${{user.name}}: DL ${{user.dl}}件 / PV ${{user.pv}}件`);
+                                    }});
+
+                                    if (data.more) {{
+                                        labels.push(`...他${{data.more}}人`);
+                                    }}
+                                }}
+
+                                return labels;
+                            }}
+                        }},
+                        bodyFont: {{
+                            size: 12
+                        }},
+                        padding: 12,
+                        displayColors: false,
+                        backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                        borderColor: 'rgba(102, 126, 234, 0.8)',
+                        borderWidth: 2
                     }}
                 }},
                 scales: {{
