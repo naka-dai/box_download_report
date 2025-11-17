@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(echo:*)",
+      "Bash(printenv:*)",
+      "Bash(export BOX_ROOT_FOLDER_ID=243194687037)",
+      "Bash(setx:*)",
+      "Bash(reg query \"HKCU\\Environment\" /v BOX_ROOT_FOLDER_ID)",
+      "Bash(powershell.exe -Command \"[System.Environment]::GetEnvironmentVariable(''BOX_ROOT_FOLDER_ID'', ''User'')\")",
+      "Bash(python test_box_connection.py:*)",
+      "Bash(BOX_ROOT_FOLDER_ID=243194687037 python:*)",
+      "Bash(BOX_DEVELOPER_TOKEN=jZbhXFQH7dVrmbgisALnsRBmyGSzgZ6g BOX_ROOT_FOLDER_ID=243194687037 python:*)",
+      "Bash(export BOX_DEVELOPER_TOKEN=jZbhXFQH7dVrmbgisALnsRBmyGSzgZ6g)",
+      "Bash(python test_recursive_files.py:*)",
+      "Bash(python test_files_quick.py:*)",
+      "Bash(python test_events.py:*)",
+      "Bash(python:*)",
+      "Bash(timeout 60 python:*)",
+      "Bash(timeout 120 python:*)",
+      "Bash(timeout 600 python:*)",
+      "Bash(timeout 180 python:*)",
+      "Bash(tee:*)",
+      "Bash(curl:*)",
+      "Bash(sqlite3:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

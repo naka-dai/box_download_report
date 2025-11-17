@@ -1,0 +1,13 @@
+# Box SDK for Python
+boxsdk>=3.9.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# PyInstaller for creating executables
+pyinstaller>=6.0.0
+
+# Additional dependencies that may be required
+cryptography>=41.0.0
+pyjwt>=2.8.0
+requests>=2.31.0
