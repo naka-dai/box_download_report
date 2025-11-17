@@ -19,6 +19,11 @@ Box ダウンロード履歴集計バッチプログラム
 - 異常ユーザー詳細 CSV 出力
 - メール通知（CSV 添付）
 - 月次サマリー生成
+- **HTMLダッシュボード生成**
+  - ダウンロード分析ダッシュボード
+  - プレビュー分析ダッシュボード
+  - Chart.js によるインタラクティブなグラフ表示
+  - 完全オフライン動作
 
 ## 必要環境
 
@@ -107,6 +112,47 @@ copy .env.sample .env
 python main.py
 ```
 
+### ダッシュボード生成
+
+#### 統合ダッシュボード（推奨）
+
+```bash
+python generate_integrated_dashboard.py
+```
+
+生成されたダッシュボード: `data/dashboard_integrated.html`
+
+ダウンロードとプレビューを統合した分析ダッシュボード:
+- ダウンロード/プレビュー比率表示
+- 月別推移（積み上げグラフ）
+- 日別推移（2系列比較）
+- 時間帯別分布（積み上げグラフ）
+- トップユーザー（ダウンロード/プレビュー別表示）
+- トップファイル（ダウンロード/プレビュー別表示）
+
+#### ダウンロード専用ダッシュボード
+
+```bash
+python generate_dashboard_v2.py
+```
+
+生成されたダッシュボード: `data/dashboard.html`
+
+#### プレビュー専用ダッシュボード
+
+```bash
+python generate_preview_dashboard.py
+```
+
+生成されたダッシュボード: `data/dashboard_preview.html`
+
+共通機能:
+- 月別推移グラフ（クリックで詳細表示）
+- 日別推移グラフ（マウスオーバーでユーザー内訳表示）
+- 時間帯別グラフ（マウスオーバーでユーザー内訳表示）
+- トップユーザーテーブル（上位10人/全員切り替え可能）
+- トップファイルテーブル（ユーザー詳細表示）
+
 ### タスクスケジューラでの自動実行
 
 #### EXE ファイルの作成
@@ -146,6 +192,12 @@ pyinstaller --onefile --name box_download_batch main.py
 
 - `monthly_user_summary_YYYYMM.csv`: ユーザー別月次サマリー
 - `monthly_file_summary_YYYYMM.csv`: ファイル別月次サマリー
+
+### ダッシュボード（HTML）
+
+- `data/dashboard_integrated.html`: 統合ダッシュボード（ダウンロード＋プレビュー）
+- `data/dashboard.html`: ダウンロード専用ダッシュボード
+- `data/dashboard_preview.html`: プレビュー専用ダッシュボード
 
 ## データベース構造
 
