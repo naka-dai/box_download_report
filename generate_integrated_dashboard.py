@@ -714,15 +714,15 @@ def generate_dashboard():
                 <div class="value">{total_downloads + total_previews:,}</div>
             </div>
             <div class="stat-card download">
-                <h3>DLユニークユーザー</h3>
+                <h3>DLユニーク数</h3>
                 <div class="value">{unique_users_download}</div>
             </div>
             <div class="stat-card preview">
-                <h3>PVユニークユーザー</h3>
+                <h3>PVユニーク数</h3>
                 <div class="value">{unique_users_preview}</div>
             </div>
             <div class="stat-card">
-                <h3>アクセスファイル数</h3>
+                <h3>ファイル数</h3>
                 <div class="value">{unique_files:,}</div>
             </div>
             <div class="stat-card">
