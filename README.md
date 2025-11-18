@@ -197,47 +197,31 @@ python generate_period_allinone_full.py
 
 #### EXE ファイルの作成
 
-##### データ収集バッチ（main.py）
+##### オールインワンバッチ（box_daily_update.py）★推奨
 
 ```bash
-pyinstaller --onefile --name box_download_batch main.py
+pyinstaller --onefile --name box_daily_update box_daily_update.py
 ```
 
-生成された `dist/box_download_batch.exe` を使用します。
+生成された `dist/box_daily_update.exe` を使用します。
 
-##### 期間フィルターダッシュボード生成（generate_period_allinone_full.py）
-
-```bash
-pyinstaller --onefile --name box_dashboard_period generate_period_allinone_full.py
-```
-
-生成された `dist/box_dashboard_period.exe` を使用します。
+このEXEは以下の処理を自動的に順次実行します:
+1. Box APIからデータ収集（main.py）
+2. 期間フィルター付きダッシュボード生成（generate_period_allinone_full.py）
 
 #### タスクスケジューラの設定
 
-##### タスク1: データ収集バッチ（Box APIからデータ取得）
-
 1. タスクスケジューラを開く
 2. 基本タスクの作成
-3. 名前: `Box Download Batch - Data Collection`
+3. 名前: `Box Daily Update - 図面活用状況レポート`
 4. トリガー: 毎日深夜（例: 午前2時）
 5. 操作: プログラムの開始
-6. プログラム/スクリプト: `box_download_batch.exe` のフルパス
+6. プログラム/スクリプト: `box_daily_update.exe` のフルパス
 7. 開始: プログラムのあるディレクトリ
 
-##### タスク2: 期間フィルターダッシュボード生成（前日までのデータ集計）
-
-1. タスクスケジューラを開く
-2. 基本タスクの作成
-3. 名前: `Box Dashboard - Period Filter (Daily Update)`
-4. トリガー: 毎日深夜（例: 午前2時30分） ※データ収集バッチの30分後
-5. 操作: プログラムの開始
-6. プログラム/スクリプト: `box_dashboard_period.exe` のフルパス
-7. 開始: プログラムのあるディレクトリ
-
-**実行順序**:
-1. 午前2時: データ収集バッチ実行（Box APIから最新データ取得）
-2. 午前2時30分: ダッシュボード生成実行（前日までのデータで集計・更新）
+**実行内容**:
+- Box APIから最新データ取得 → SQLiteデータベース保存
+- 前日までのデータで期間フィルター付きダッシュボード生成・更新
 
 これにより、毎日最新のデータでダッシュボードが自動更新されます。
 
