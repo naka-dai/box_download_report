@@ -174,9 +174,30 @@ python generate_preview_dashboard.py
 - トップユーザーテーブル（上位10人/全員切り替え可能）
 - トップファイルテーブル（ユーザー詳細表示）
 
+#### 期間フィルター付きダッシュボード（図面活用状況）★推奨
+
+```bash
+python generate_period_allinone_full.py
+```
+
+生成されたダッシュボード: `data/dashboard_period_allinone_full.html`
+
+**Box レポート 図面活用状況** - 運用開始前後の比較分析が可能
+
+主な機能:
+- **期間フィルター**: 全期間/運用開始前（～2025-10-13）/運用開始後（2025-10-14～）を切り替え
+- **3つのタブ**: 統合レポート/ダウンロードのみ集計/プレビューのみ集計
+- **マウスオーバー詳細表示**: 月別/日別/時間帯別グラフでトップ5ユーザーとアクセス数を表示
+- **リッチUI**: トグル表示、ユーザー詳細ツールチップ、重複率表示、DL/PVバッジ
+- **完全オフライン動作**: Chart.js組み込み（1.6 MB）
+
+**毎日自動更新**: タスクスケジューラで毎日実行することで、常に最新データを表示
+
 ### タスクスケジューラでの自動実行
 
 #### EXE ファイルの作成
+
+##### データ収集バッチ（main.py）
 
 ```bash
 pyinstaller --onefile --name box_download_batch main.py
@@ -184,14 +205,41 @@ pyinstaller --onefile --name box_download_batch main.py
 
 生成された `dist/box_download_batch.exe` を使用します。
 
+##### 期間フィルターダッシュボード生成（generate_period_allinone_full.py）
+
+```bash
+pyinstaller --onefile --name box_dashboard_period generate_period_allinone_full.py
+```
+
+生成された `dist/box_dashboard_period.exe` を使用します。
+
 #### タスクスケジューラの設定
+
+##### タスク1: データ収集バッチ（Box APIからデータ取得）
 
 1. タスクスケジューラを開く
 2. 基本タスクの作成
-3. トリガー: 毎日深夜（例: 午前2時）
-4. 操作: プログラムの開始
-5. プログラム/スクリプト: `box_download_batch.exe` のフルパス
-6. 開始: プログラムのあるディレクトリ
+3. 名前: `Box Download Batch - Data Collection`
+4. トリガー: 毎日深夜（例: 午前2時）
+5. 操作: プログラムの開始
+6. プログラム/スクリプト: `box_download_batch.exe` のフルパス
+7. 開始: プログラムのあるディレクトリ
+
+##### タスク2: 期間フィルターダッシュボード生成（前日までのデータ集計）
+
+1. タスクスケジューラを開く
+2. 基本タスクの作成
+3. 名前: `Box Dashboard - Period Filter (Daily Update)`
+4. トリガー: 毎日深夜（例: 午前2時30分） ※データ収集バッチの30分後
+5. 操作: プログラムの開始
+6. プログラム/スクリプト: `box_dashboard_period.exe` のフルパス
+7. 開始: プログラムのあるディレクトリ
+
+**実行順序**:
+1. 午前2時: データ収集バッチ実行（Box APIから最新データ取得）
+2. 午前2時30分: ダッシュボード生成実行（前日までのデータで集計・更新）
+
+これにより、毎日最新のデータでダッシュボードが自動更新されます。
 
 ## 出力ファイル
 
@@ -216,6 +264,7 @@ pyinstaller --onefile --name box_download_batch main.py
 
 ### ダッシュボード（HTML）
 
+- `data/dashboard_period_allinone_full.html`: **期間フィルター付きダッシュボード（図面活用状況）★推奨** - 運用開始前後の比較分析、マウスオーバー詳細表示（1.6 MB）
 - `data/dashboard_allinone.html`: オールインワンダッシュボード（タブ切り替えで3つのビューを表示）
 - `data/dashboard_allinone_full.html`: オールインワンダッシュボード完全版（全リッチUI機能搭載、37MB）
 - `data/dashboard_integrated.html`: 統合ダッシュボード（ダウンロード＋プレビュー）
