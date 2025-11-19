@@ -41,48 +41,65 @@ class EventsFetcher:
         logger.info(f"Fetching events from {start_time} to {end_time}")
 
         events = []
-        stream_position = 0
+        stream_position = None  # Start from beginning (or use 'now' for most recent)
 
         # Box Events API uses admin_logs stream for enterprise events
         try:
             # Get events using enterprise events API
-            # Note: created_after and created_before are in RFC 3339 format
-            created_after = start_time.strftime('%Y-%m-%dT%H:%M:%S-00:00')
-            created_before = end_time.strftime('%Y-%m-%dT%H:%M:%S-00:00')
-
-            logger.info(f"Querying Box events API with created_after={created_after}, created_before={created_before}")
-
-            # Use admin_logs_streaming for enterprise events
-            # The Box SDK provides get_events() method
-            options = {
-                'stream_type': 'admin_logs',
-                'created_after': created_after,
-                'created_before': created_before,
-            }
+            logger.info(f"Querying Box events API for period: {start_time} to {end_time}")
 
             event_count = 0
             filtered_count = 0
+            date_filtered_count = 0
 
             # Fetch events in batches
+            # Note: Box Events API does not support created_after/created_before filters
+            # We need to fetch events and filter by date on the client side
             while True:
                 try:
                     # Get events from Box
-                    # Note: Box SDK's get_events() returns an iterator
+                    # Box SDK's get_events() only supports: limit, stream_position, stream_type
+                    # stream_position can be: None (start), 0 (start), 'now' (current), or a position string
                     events_response = self.client.events().get_events(
                         stream_type='admin_logs',
                         limit=500,
-                        stream_position=stream_position if stream_position > 0 else None,
-                        created_after=created_after,
-                        created_before=created_before
+                        stream_position=stream_position if stream_position is not None else 0
                     )
 
-                    batch_events = list(events_response)
+                    batch_events = list(events_response.get('entries', []))
+
+                    # Update stream position for next batch
+                    next_stream_position = events_response.get('next_stream_position')
+                    if next_stream_position:
+                        stream_position = next_stream_position
 
                     if not batch_events:
                         break
 
                     for event in batch_events:
                         event_count += 1
+
+                        # Filter by date range
+                        # Event created_at is in ISO 8601 format: "2025-11-18T12:34:56-08:00"
+                        created_at_str = event.get('created_at')
+                        if created_at_str:
+                            try:
+                                from dateutil import parser
+                                event_time = parser.parse(created_at_str)
+
+                                # Check if event is within our date range
+                                if event_time < start_time or event_time >= end_time:
+                                    # Event is outside our date range
+                                    # If event is before our range, we can stop fetching
+                                    if event_time < start_time:
+                                        logger.info(f"Reached events before target period, stopping fetch")
+                                        break
+                                    continue
+
+                                date_filtered_count += 1
+                            except Exception as e:
+                                logger.warning(f"Failed to parse event timestamp {created_at_str}: {e}")
+                                continue
 
                         # Filter for DOWNLOAD events only
                         if event.get('event_type') != 'DOWNLOAD':
@@ -104,17 +121,18 @@ class EventsFetcher:
                         if parsed_event:
                             events.append(parsed_event)
 
-                    # Update stream position for next batch
+                    # Check if we should continue fetching
+                    # stream_position is already updated from next_stream_position
                     if len(batch_events) < 500:
                         break
-
-                    stream_position += len(batch_events)
 
                 except Exception as e:
                     logger.error(f"Error fetching events batch: {e}")
                     break
 
-            logger.info(f"Processed {event_count} total events, filtered to {filtered_count} download events")
+            logger.info(f"Processed {event_count} total events")
+            logger.info(f"Date filtered: {date_filtered_count} events in range")
+            logger.info(f"Download events in target folder: {filtered_count}")
 
         except Exception as e:
             logger.error(f"Error fetching events: {e}")
