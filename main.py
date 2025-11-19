@@ -63,11 +63,25 @@ class BoxDownloadBatch:
             logger.info("Initializing Box client...")
             self.box_client = BoxClient(self.config.BOX_CONFIG_PATH)
 
-            # Get target file IDs from root folder
-            logger.info(f"Getting file list from folder: {self.config.BOX_ROOT_FOLDER_ID}")
-            target_file_ids = self.box_client.get_all_file_ids_in_folder(
-                self.config.BOX_ROOT_FOLDER_ID
-            )
+            # Get target folder ID
+            # If BOX_ROOT_FOLDER_ID is Box Reports folder (248280918136),
+            # automatically find the latest "User Activity run on ~" folder
+            target_folder_id = self.config.BOX_ROOT_FOLDER_ID
+
+            if target_folder_id == "248280918136":
+                logger.info(f"Box Reports folder detected (ID: {target_folder_id})")
+                logger.info("Searching for latest 'User Activity run on ~' folder...")
+                latest_folder_id = self.box_client.get_latest_user_activity_folder(target_folder_id)
+
+                if latest_folder_id:
+                    logger.info(f"Using latest User Activity folder as target: {latest_folder_id}")
+                    target_folder_id = latest_folder_id
+                else:
+                    logger.warning("No User Activity folder found, using Box Reports folder as fallback")
+
+            # Get target file IDs from folder
+            logger.info(f"Getting file list from folder: {target_folder_id}")
+            target_file_ids = self.box_client.get_all_file_ids_in_folder(target_folder_id)
             logger.info(f"Found {len(target_file_ids)} files in target folder")
 
             # Calculate target dates (JST)

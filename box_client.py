@@ -112,6 +112,50 @@ class BoxClient:
 
         return file_ids
 
+    def get_latest_user_activity_folder(self, reports_folder_id: str) -> Optional[str]:
+        """
+        Find the latest 'User Activity run on ~' folder in Box Reports folder.
+
+        Args:
+            reports_folder_id: Box Reports parent folder ID
+
+        Returns:
+            Latest User Activity folder ID, or None if not found
+        """
+        if not self.client:
+            raise RuntimeError("Box client not initialized")
+
+        try:
+            folder = self.client.folder(reports_folder_id)
+            items = folder.get_items()
+
+            user_activity_folders = []
+
+            for item in items:
+                if item.type == 'folder' and item.name.startswith('User Activity run on '):
+                    user_activity_folders.append({
+                        'id': item.id,
+                        'name': item.name
+                    })
+
+            if not user_activity_folders:
+                logger.warning("No 'User Activity run on ~' folders found")
+                return None
+
+            # Sort by name (descending) to get the latest
+            # Format: "User Activity run on 2025-11-19 01-43-09"
+            user_activity_folders.sort(key=lambda x: x['name'], reverse=True)
+            latest_folder = user_activity_folders[0]
+
+            logger.info(f"Found {len(user_activity_folders)} User Activity folders")
+            logger.info(f"Latest User Activity folder: {latest_folder['name']} (ID: {latest_folder['id']})")
+
+            return latest_folder['id']
+
+        except Exception as e:
+            logger.error(f"Failed to find latest User Activity folder: {e}")
+            return None
+
     def get_file_info(self, file_id: str) -> dict:
         """
         Get file information.
