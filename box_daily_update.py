@@ -3,16 +3,31 @@ Box Daily Update - All-in-One Script
 データ収集とダッシュボード生成を1つにまとめたスクリプト
 
 実行順序:
-1. BoxレポートCSVファイルからデータインポート
-2. Box APIから最新データを取得してSQLiteに保存
-3. 期間フィルター付きダッシュボードを生成
+1. Box APIから最新データを取得してSQLiteに保存
+2. 期間フィルター付きダッシュボードを生成
 """
 
 import sys
 import os
-import glob
 from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load .env from the same directory as this script/exe
+if getattr(sys, 'frozen', False):
+    # Running as compiled exe
+    application_path = os.path.dirname(sys.executable)
+else:
+    # Running as script
+    application_path = os.path.dirname(os.path.abspath(__file__))
+
+env_path = os.path.join(application_path, '.env')
+if os.path.exists(env_path):
+    load_dotenv(env_path, override=True)
+    print(f"[INFO] Loaded .env from: {env_path}")
+else:
+    print(f"[WARNING] .env not found at: {env_path}")
+    load_dotenv(override=True)  # Try default behavior
 
 def main():
     """メイン処理"""
@@ -21,41 +36,8 @@ def main():
     print(f"開始時刻: {datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}")
     print("=" * 80)
 
-    # ステップ1: CSVファイルからデータインポート
-    print("\n[ステップ1] BoxレポートCSVファイルからデータインポート中...")
-    print("-" * 80)
-
-    try:
-        from db import Database
-        from csv_importer import CSVImporter
-        from config import Config
-
-        # CSVファイルを検索
-        csv_dir = Config.REPORT_OUTPUT_DIR
-        csv_pattern = os.path.join(csv_dir, "user_activity*.csv")
-        csv_files = sorted(glob.glob(csv_pattern), reverse=True)
-
-        if csv_files:
-            print(f"見つかったCSVファイル: {len(csv_files)}件")
-            # 最新の3ファイルのみ処理（ページ分割されたファイル対応）
-            recent_csvs = csv_files[:10]
-
-            with Database(Config.DB_PATH) as db:
-                importer = CSVImporter(db)
-                imported_count = importer.import_multiple_csvs(recent_csvs)
-                print(f"[OK] CSVインポート完了: {imported_count:,}件のレコードを処理")
-        else:
-            print(f"[INFO] CSVファイルが見つかりません: {csv_pattern}")
-            print("[INFO] Box APIからのデータ取得に進みます")
-
-    except Exception as e:
-        print(f"[WARNING] CSVインポート中にエラーが発生しました: {e}")
-        print("[INFO] Box APIからのデータ取得に進みます")
-        import traceback
-        traceback.print_exc()
-
-    # ステップ2: Box APIからデータ収集
-    print("\n[ステップ2] Box APIからデータ収集中...")
+    # ステップ1: Box APIからデータ収集
+    print("\n[ステップ1] Box APIからデータ収集中...")
     print("-" * 80)
 
     try:
@@ -70,8 +52,8 @@ def main():
         import traceback
         traceback.print_exc()
 
-    # ステップ3: ダッシュボード生成
-    print("\n[ステップ3] 期間フィルター付きダッシュボード生成中...")
+    # ステップ2: ダッシュボード生成
+    print("\n[ステップ2] 期間フィルター付きダッシュボード生成中...")
     print("-" * 80)
 
     try:
@@ -88,7 +70,7 @@ def main():
 
     # 完了メッセージ
     print("\n" + "=" * 80)
-    print("✓ Box Daily Update 完了")
+    print("[SUCCESS] Box Daily Update 完了")
     print(f"終了時刻: {datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}")
     print("=" * 80)
     print("\n生成されたダッシュボード:")

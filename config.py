@@ -3,10 +3,9 @@
 import os
 from pathlib import Path
 from typing import Optional
-from dotenv import load_dotenv
 
-# Load .env file
-load_dotenv()
+# NOTE: .env file should be loaded before importing this module
+# See box_daily_update.py for explicit .env loading
 
 
 class Config:

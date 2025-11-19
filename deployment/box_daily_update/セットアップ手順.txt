@@ -36,15 +36,14 @@ Box Daily Update - セットアップ手順（別PCへの配置）
    box_daily_update.exe
 
 4. 実行結果を確認
-   - ステップ1: BoxレポートCSVファイルからデータインポート
-   - ステップ2: Box APIから最新データ取得 → SQLiteデータベース保存
-   - ステップ3: ダッシュボード生成 → data\dashboard_period_allinone_full.html
+   - ステップ1: Box APIから最新データ取得 → SQLiteデータベース保存
+   - ステップ2: ダッシュボード生成 → data\dashboard_period_allinone_full.html
 
 5. 生成されたダッシュボードをブラウザで開く
    data\dashboard_period_allinone_full.html
 
-注意: BoxレポートCSVファイルは、.envで指定されたフォルダ（デフォルト: C:\box_reports）
-     から自動的に読み込まれます。CSVファイルがある場合は自動でインポートされます。
+注意: すべてのデータはBox API経由で取得されます。
+     BoxドライブやBoxレポートCSVファイルは不要です。
 
 
 ■ タスクスケジューラ設定
@@ -77,18 +76,12 @@ Box Daily Update - セットアップ手順（別PCへの配置）
 
 box_daily_update.exe は以下の処理を自動実行します:
 
-【ステップ1】BoxレポートCSVインポート
-  - C:\box_reportsフォルダ内のuser_activity*.csvファイルを検索
-  - 最新の10ファイルからダウンロードイベントをインポート
+【ステップ1】Box APIデータ収集
+  - Box APIから最新のダウンロード/プレビューログを取得
   - SQLiteデータベース（data/box_audit.db）に保存
   - 重複データは自動スキップ
 
-【ステップ2】Box APIデータ収集
-  - Box APIから最新のダウンロード/プレビューログを取得
-  - SQLiteデータベース（data/box_audit.db）に追加保存
-  - 重複データは自動スキップ
-
-【ステップ3】ダッシュボード生成
+【ステップ2】ダッシュボード生成
   - データベースからデータを集計
   - 期間フィルター付きHTMLダッシュボードを生成
     ファイル: data/dashboard_period_allinone_full.html
