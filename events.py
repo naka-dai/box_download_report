@@ -110,10 +110,10 @@ class EventsFetcher:
                         if not source or source.get('type') != 'file':
                             continue
 
-                        # Note: Folder filtering disabled - collecting ALL download events
-                        # file_id = source.get('id')
-                        # if file_id not in target_file_ids:
-                        #     continue
+                        # Check if the file is in our target folder
+                        file_id = source.get('id')
+                        if file_id not in target_file_ids:
+                            continue
 
                         filtered_count += 1
 
