@@ -1,0 +1,4 @@
+[build]
+  # Skip build process - we're deploying pre-built HTML
+  command = "echo 'Deploying pre-built dashboard'"
+  publish = "."

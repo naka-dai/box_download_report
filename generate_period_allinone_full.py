@@ -654,16 +654,16 @@ def generate_period_content(period_id, period_name, stats):
         daily_preview_tooltips.append(tooltip_data)
 
     # Build tooltip data for hourly integrated chart
-    hourly_integrated_labels = [f"{row[0]:02d}:00" for row in stats['hourly_integrated']]
-    hourly_integrated_downloads = [row[1] for row in stats['hourly_integrated']]
-    hourly_integrated_previews = [row[2] for row in stats['hourly_integrated']]
+    hourly_integrated_labels = [f"{row[0]:02d}:00" if row[0] is not None else "00:00" for row in stats['hourly_integrated']]
+    hourly_integrated_downloads = [row[1] if row[1] is not None else 0 for row in stats['hourly_integrated']]
+    hourly_integrated_previews = [row[2] if row[2] is not None else 0 for row in stats['hourly_integrated']]
 
     hourly_integrated_tooltips = []
     for hour, dl_count, pv_count, user_breakdown in stats['hourly_integrated']:
         tooltip_data = {
-            'hour': f"{hour:02d}:00",
-            'dl_count': dl_count,
-            'pv_count': pv_count,
+            'hour': f"{hour:02d}:00" if hour is not None else "00:00",
+            'dl_count': dl_count if dl_count is not None else 0,
+            'pv_count': pv_count if pv_count is not None else 0,
             'users': []
         }
         for user_name, user_dl, user_pv, user_total in user_breakdown[:5]:  # Top 5 users
@@ -678,14 +678,14 @@ def generate_period_content(period_id, period_name, stats):
         hourly_integrated_tooltips.append(tooltip_data)
 
     # Build tooltip data for hourly download chart
-    hourly_download_labels = [f"{row[0]:02d}:00" for row in stats['hourly_download']]
-    hourly_download_values = [row[1] for row in stats['hourly_download']]
+    hourly_download_labels = [f"{row[0]:02d}:00" if row[0] is not None else "00:00" for row in stats['hourly_download']]
+    hourly_download_values = [row[1] if row[1] is not None else 0 for row in stats['hourly_download']]
 
     hourly_download_tooltips = []
     for hour, dl_count, user_breakdown in stats['hourly_download']:
         tooltip_data = {
-            'hour': f"{hour:02d}:00",
-            'dl_count': dl_count,
+            'hour': f"{hour:02d}:00" if hour is not None else "00:00",
+            'dl_count': dl_count if dl_count is not None else 0,
             'users': []
         }
         for user_name, user_dl in user_breakdown[:5]:  # Top 5 users
@@ -698,14 +698,14 @@ def generate_period_content(period_id, period_name, stats):
         hourly_download_tooltips.append(tooltip_data)
 
     # Build tooltip data for hourly preview chart
-    hourly_preview_labels = [f"{row[0]:02d}:00" for row in stats['hourly_preview']]
-    hourly_preview_values = [row[1] for row in stats['hourly_preview']]
+    hourly_preview_labels = [f"{row[0]:02d}:00" if row[0] is not None else "00:00" for row in stats['hourly_preview']]
+    hourly_preview_values = [row[1] if row[1] is not None else 0 for row in stats['hourly_preview']]
 
     hourly_preview_tooltips = []
     for hour, pv_count, user_breakdown in stats['hourly_preview']:
         tooltip_data = {
-            'hour': f"{hour:02d}:00",
-            'pv_count': pv_count,
+            'hour': f"{hour:02d}:00" if hour is not None else "00:00",
+            'pv_count': pv_count if pv_count is not None else 0,
             'users': []
         }
         for user_name, user_pv in user_breakdown[:5]:  # Top 5 users
@@ -1760,9 +1760,24 @@ def generate_dashboard():
         chartjs_code = f.read()
 
     # Connect to database
-    db_path = r"data\box_audit.db"
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    # Get DB path from environment variable or use default
+    import os
+    db_path = os.getenv("DB_PATH", r"data\box_audit.db")
+    print(f"[DEBUG] Dashboard using DB: {db_path}")
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        # Test connection
+        cursor.execute("SELECT COUNT(*) FROM downloads")
+        count = cursor.fetchone()[0]
+        print(f"[DEBUG] Database connected successfully. Records: {count}")
+    except Exception as e:
+        print(f"[ERROR] Failed to connect to database: {e}")
+        print(f"[ERROR] Database path: {db_path}")
+        import traceback
+        traceback.print_exc()
+        raise
 
     # Admin user IDs to exclude
     admin_ids = ['13213941207', '16623033409', '30011740170', '32504279209']
@@ -2342,7 +2357,10 @@ def generate_dashboard():
 </html>'''
 
     # Write HTML file
-    output_path = r"data\dashboard_period_allinone_full.html"
+    # Get output directory from environment variable or use default
+    output_dir = os.getenv("REPORT_OUTPUT_DIR", "data")
+    output_path = os.path.join(output_dir, "dashboard_period_allinone_full.html")
+    print(f"[DEBUG] Saving dashboard to: {output_path}")
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
 
