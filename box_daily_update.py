@@ -3,9 +3,10 @@ Box Daily Update - All-in-One Script
 データ収集とダッシュボード生成を1つにまとめたスクリプト
 
 実行順序:
-1. Box APIから最新データを取得してSQLiteに保存
-2. 期間フィルター付きダッシュボードを生成
-3. GitHub Pages へダッシュボードをプッシュ（オプション）
+1. User Activity CSVファイルからデータインポート（オプション）
+2. Box APIから最新データを取得してSQLiteに保存（オプション）
+3. 期間フィルター付きダッシュボードを生成
+4. Netlifyへダッシュボードをデプロイ（オプション）
 """
 
 import sys
@@ -180,6 +181,57 @@ def main():
     print("Box Daily Update - データ収集とダッシュボード生成")
     print(f"開始時刻: {datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}")
     print("=" * 80)
+
+    # ステップ0: User Activity CSVをBox APIからダウンロードしてインポート（オプション）
+    skip_csv_import = os.getenv("SKIP_CSV_IMPORT", "").lower() in ("1", "true", "yes")
+
+    if skip_csv_import:
+        print("\n[ステップ0] CSVインポートをスキップ (SKIP_CSV_IMPORT=1)")
+        print("-" * 80)
+    else:
+        print("\n[ステップ0] User Activity CSVをBox APIからダウンロードしてインポート中...")
+        print("-" * 80)
+
+        try:
+            from db import Database
+            from csv_importer import CSVImporter
+            from csv_downloader import CSVDownloader
+            from box_client import BoxClient
+
+            # Box APIクライアントを初期化
+            print("[INFO] Box APIクライアント初期化中...")
+            config_path = os.getenv("BOX_CONFIG_PATH", "config.json")
+            box_client = BoxClient(config_path)
+
+            # CSVダウンローダーを初期化
+            # ダウンロード先: EXEファイルと同じフォルダ/data
+            csv_downloader = CSVDownloader(box_client)
+
+            # Box Reports フォルダIDを取得
+            box_reports_folder_id = os.getenv("BOX_ROOT_FOLDER_ID", "248280918136")
+
+            # 最新のUser Activity フォルダからCSVファイルをダウンロード
+            print(f"[INFO] Box Reports フォルダ (ID: {box_reports_folder_id}) から最新のUser Activity CSVをダウンロード中...")
+            csv_files = csv_downloader.download_latest_user_activity_csvs(box_reports_folder_id)
+
+            if csv_files:
+                print(f"[OK] {len(csv_files)}個のCSVファイルをダウンロード完了")
+
+                # ダウンロードしたCSVファイルをデータベースにインポート
+                db_path = os.getenv("DB_PATH", "C:\\box_reports\\box_audit.db")
+                with Database(db_path) as db:
+                    importer = CSVImporter(db)
+                    imported_count = importer.import_multiple_csvs(csv_files)
+                    print(f"[OK] CSVインポート完了: {imported_count:,}件のイベントをインポート")
+            else:
+                print("[WARNING] CSVファイルのダウンロードに失敗しました")
+                print("[INFO] Box APIからのデータ取得に進みます")
+
+        except Exception as e:
+            print(f"[WARNING] CSVダウンロード/インポート中にエラーが発生しました: {e}")
+            print("[INFO] Box APIからのデータ取得に進みます")
+            import traceback
+            traceback.print_exc()
 
     # ステップ1: Box APIからデータ収集
     skip_data_collection = os.getenv("SKIP_DATA_COLLECTION", "").lower() in ("1", "true", "yes")

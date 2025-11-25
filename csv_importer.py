@@ -59,7 +59,7 @@ class CSVImporter:
 
             logger.info(f"Read {len(data):,} rows from CSV")
 
-            # Import download events only
+            # Import download and preview events
             imported = 0
             skipped = 0
 
@@ -67,8 +67,12 @@ class CSVImporter:
                 # Get operation type (操作)
                 operation = row.get('操作', '').strip()
 
-                # Only import download events
-                if operation != 'ダウンロード':
+                # Import both download and preview events
+                if operation == 'ダウンロード':
+                    event_type = 'DOWNLOAD'
+                elif operation == 'プレビュー':
+                    event_type = 'PREVIEW'
+                else:
                     skipped += 1
                     continue
 
@@ -106,14 +110,14 @@ class CSVImporter:
                     download_at_utc = download_at.strftime('%Y-%m-%dT%H:%M:%S')
                     download_at_jst = download_at.strftime('%Y-%m-%dT%H:%M:%S')
 
-                    # Create unique event_id from row data
-                    event_id = f"{user_id}_{file_id}_{download_at.strftime('%Y%m%d%H%M%S')}"
+                    # Create unique event_id from row data (include event_type to avoid collision)
+                    event_id = f"csv_{user_id}_{file_id}_{event_type}_{download_at.strftime('%Y%m%d%H%M%S')}"
 
                     # Build event dictionary matching db.py signature
                     event = {
                         'event_id': event_id,
                         'stream_type': 'user_activity_csv',
-                        'event_type': 'DOWNLOAD',
+                        'event_type': event_type,
                         'user_login': user_email,
                         'user_name': user_name,
                         'file_id': file_id,
@@ -135,16 +139,18 @@ class CSVImporter:
                     }
 
                     # Insert into database
-                    self.db.insert_download_event(event)
-
-                    imported += 1
+                    if self.db.insert_download_event(event):
+                        imported += 1
+                    else:
+                        # Duplicate - already exists
+                        skipped += 1
 
                 except Exception as e:
                     logger.warning(f"Error importing row: {e}, row: {row}")
                     skipped += 1
                     continue
 
-            logger.info(f"Import complete: {imported:,} downloads imported, {skipped:,} rows skipped")
+            logger.info(f"Import complete: {imported:,} events imported (DOWNLOAD/PREVIEW), {skipped:,} rows skipped")
 
             return imported
 
@@ -172,6 +178,6 @@ class CSVImporter:
             imported = self.import_user_activity_csv(csv_path)
             total_imported += imported
 
-        logger.info(f"Total imported from {len(csv_paths)} files: {total_imported:,} downloads")
+        logger.info(f"Total imported from {len(csv_paths)} files: {total_imported:,} events")
 
         return total_imported
