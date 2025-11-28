@@ -50,6 +50,10 @@ class Config:
     # Attachment Settings
     ALERT_ATTACHMENT_MAX_ROWS: int = int(os.getenv("ALERT_ATTACHMENT_MAX_ROWS", "5000"))
 
+    # Excluded users from anomaly detection (comma-separated email addresses)
+    # These users are system/admin accounts excluded from dashboard statistics
+    ALERT_EXCLUDE_USERS: str = os.getenv("ALERT_EXCLUDE_USERS", "")
+
     @classmethod
     def validate(cls) -> bool:
         """Validate required configuration."""
@@ -108,3 +112,15 @@ class Config:
             int(end_parts[0]),
             int(end_parts[1]) if len(end_parts) > 1 else 0,
         )
+
+    @classmethod
+    def get_alert_exclude_users(cls) -> set[str]:
+        """
+        Get set of user emails to exclude from anomaly detection.
+
+        Returns:
+            set: Set of email addresses to exclude
+        """
+        if not cls.ALERT_EXCLUDE_USERS:
+            return set()
+        return {email.strip().lower() for email in cls.ALERT_EXCLUDE_USERS.split(",") if email.strip()}

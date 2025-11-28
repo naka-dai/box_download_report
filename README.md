@@ -84,25 +84,45 @@ copy .env.sample .env
 ### 異常検知設定
 
 - `ALERT_ENABLED`: 異常検知の有効/無効
-- `ALERT_USER_DOWNLOAD_COUNT_THRESHOLD`: ユーザーあたりダウンロード数閾値（デフォルト: 200）
-- `ALERT_USER_UNIQUE_FILES_THRESHOLD`: ユーザーあたりユニークファイル数閾値（デフォルト: 100）
+- `ALERT_USER_DOWNLOAD_COUNT_THRESHOLD`: ユーザーあたり1日のダウンロード数閾値（デフォルト: 150）
+- `ALERT_USER_UNIQUE_FILES_THRESHOLD`: ユーザーあたり1日のユニークファイル数閾値（デフォルト: 100）
 - `BUSINESS_HOURS_START`: 勤務時間開始（JST、例: 08:00）
 - `BUSINESS_HOURS_END`: 勤務時間終了（JST、例: 20:00）
-- `ALERT_OFFHOUR_DOWNLOAD_THRESHOLD`: 勤務時間外ダウンロード閾値（デフォルト: 50）
+- `ALERT_OFFHOUR_DOWNLOAD_THRESHOLD`: ユーザーあたり1日の勤務時間外ダウンロード閾値（デフォルト: 50）
 - `ALERT_SPIKE_WINDOW_MINUTES`: スパイク検知時間窓（分、デフォルト: 60）
-- `ALERT_SPIKE_DOWNLOAD_THRESHOLD`: スパイク検知ダウンロード数閾値（デフォルト: 100）
+- `ALERT_SPIKE_DOWNLOAD_THRESHOLD`: ユーザーあたりスパイク検知ダウンロード数閾値（デフォルト: 50）
 
 ### メール設定
 
-- `SMTP_HOST`: SMTP サーバーホスト
+- `SMTP_HOST`: SMTP サーバーホスト（Gmail: smtp.gmail.com）
 - `SMTP_PORT`: SMTP ポート（デフォルト: 587）
 - `SMTP_USE_TLS`: TLS 使用（True/False）
-- `SMTP_USER`: SMTP ユーザー名
-- `SMTP_PASSWORD`: SMTP パスワード
+- `SMTP_USER`: SMTP ユーザー名（Gmail: メールアドレス）
+- `SMTP_PASSWORD`: SMTP パスワード（Gmail: アプリパスワード）
 - `ALERT_MAIL_FROM`: 送信元メールアドレス
-- `ALERT_MAIL_TO`: 送信先メールアドレス（カンマ区切りで複数指定可）
+- `ALERT_MAIL_RECIPIENTS_CSV`: 送信先メールアドレスCSVファイルのパス（デフォルト: mail_recipients.csv）
 - `ALERT_MAIL_SUBJECT_PREFIX`: メール件名プレフィックス
 - `ALERT_ATTACHMENT_MAX_ROWS`: 添付ファイルの最大行数（デフォルト: 5000）
+
+#### 送信先CSVファイル（mail_recipients.csv）
+
+```csv
+email,name,enabled
+user1@example.com,ユーザー1,1
+user2@example.com,ユーザー2,1
+disabled@example.com,無効ユーザー,0
+```
+
+- `enabled`: 1=有効、0=無効（無効化すると送信対象外）
+
+#### Gmail SMTP設定
+
+Gmailを使用する場合は、アプリパスワードの設定が必要です:
+
+1. Googleアカウントで2段階認証を有効化
+2. https://myaccount.google.com/apppasswords にアクセス
+3. アプリパスワードを生成（例: BoxReport）
+4. 生成された16桁のパスワードを`SMTP_PASSWORD`に設定
 
 ## 実行方法
 
@@ -206,8 +226,11 @@ pyinstaller --onefile --name box_daily_update box_daily_update.py
 生成された `dist/box_daily_update.exe` を使用します。
 
 このEXEは以下の処理を自動的に順次実行します:
-1. Box APIからデータ収集（main.py）
-2. 期間フィルター付きダッシュボード生成（generate_period_allinone_full.py）
+1. BoxからUser Activity CSVを自動ダウンロード・インポート
+2. 異常検知処理（閾値超過ユーザーの検出）
+3. **異常検出時はメール通知（CSV添付）**
+4. 期間フィルター付きダッシュボード生成
+5. Netlifyへの自動デプロイ（ダッシュボード公開）
 
 #### タスクスケジューラの設定
 
@@ -220,10 +243,12 @@ pyinstaller --onefile --name box_daily_update box_daily_update.py
 7. 開始: プログラムのあるディレクトリ
 
 **実行内容**:
-- Box APIから最新データ取得 → SQLiteデータベース保存
-- 前日までのデータで期間フィルター付きダッシュボード生成・更新
+- BoxからUser Activity CSVを自動ダウンロード → SQLiteデータベース保存
+- 異常検知処理 → 閾値超過時はメール通知
+- 期間フィルター付きダッシュボード生成・更新
+- Netlifyへ自動デプロイ
 
-これにより、毎日最新のデータでダッシュボードが自動更新されます。
+これにより、毎日最新のデータでダッシュボードが自動更新され、異常時はメールでアラートが届きます。
 
 ## 出力ファイル
 

@@ -183,28 +183,61 @@ class CSVReporter:
         Returns:
             Output file path
         """
+        from datetime import datetime, timedelta, timezone
+
         output_path = Path(output_dir) if output_dir else self.output_dir
         output_path.mkdir(parents=True, exist_ok=True)
 
-        filename = f"anomaly_details_{date_str}_{period_type}.csv"
+        # Determine anomaly types for filename
+        all_anomaly_types = set()
+        for data in anomalous_users.values():
+            for anomaly in data.get('anomaly_types', []):
+                all_anomaly_types.add(anomaly.get('type', 'unknown'))
+
+        # Create filename with anomaly types
+        if len(all_anomaly_types) == 1:
+            type_suffix = list(all_anomaly_types)[0]
+        elif len(all_anomaly_types) > 1:
+            type_suffix = 'mixed'
+        else:
+            type_suffix = 'unknown'
+
+        filename = f"anomaly_details_{date_str}_{period_type}_{type_suffix}.csv"
         filepath = output_path / filename
 
-        # Collect all events from anomalous users
+        # Collect all events from anomalous users with anomaly info
         all_events = []
         for user_login, data in anomalous_users.items():
-            events = data.get('events', [])
-            all_events.extend(events)
+            # Build anomaly type string and details
+            anomaly_types = data.get('anomaly_types', [])
+            types_str = '+'.join([a.get('type', '') for a in anomaly_types])
+            details_str = '; '.join([
+                f"{a.get('type', '')}:{a.get('value', '')}/" + str(a.get('threshold', ''))
+                for a in anomaly_types
+            ])
 
-        # Sort by download time
-        all_events.sort(key=lambda e: e.get('download_at_jst', ''))
+            events = data.get('events', [])
+            for event in events:
+                event_copy = event.copy()
+                event_copy['anomaly_types'] = types_str
+                event_copy['anomaly_details'] = details_str
+                all_events.append(event_copy)
+
+        # Sort by user and download time
+        all_events.sort(key=lambda e: (e.get('user_login', ''), e.get('download_at_jst', '')))
 
         # Apply max_rows limit if specified
         if max_rows and len(all_events) > max_rows:
             logger.warning(f"Anomaly details has {len(all_events)} rows, truncating to {max_rows}")
             all_events = all_events[:max_rows]
 
+        # JST timezone
+        jst = timezone(timedelta(hours=9))
+
         with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
             fieldnames = [
+                'anomaly_types',
+                'anomaly_details',
                 'user_login',
                 'user_name',
                 'file_id',
@@ -216,12 +249,35 @@ class CSVReporter:
             writer.writeheader()
 
             for event in all_events:
+                # Convert UTC to JST if needed
+                download_time = event.get('download_at_jst', '') or event.get('download_at_utc', '')
+                if download_time:
+                    try:
+                        # Parse the datetime
+                        if 'T' in download_time:
+                            dt = datetime.fromisoformat(download_time.replace('Z', '+00:00'))
+                        else:
+                            dt = datetime.strptime(download_time, '%Y-%m-%d %H:%M:%S')
+
+                        # If naive datetime or UTC, convert to JST
+                        if dt.tzinfo is None:
+                            # Assume UTC if no timezone
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        if dt.tzinfo == timezone.utc or (hasattr(dt.tzinfo, 'utcoffset') and dt.tzinfo.utcoffset(dt) == timedelta(0)):
+                            dt = dt.astimezone(jst)
+
+                        download_time = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    except Exception as e:
+                        logger.warning(f"Failed to parse datetime {download_time}: {e}")
+
                 writer.writerow({
+                    'anomaly_types': event.get('anomaly_types', ''),
+                    'anomaly_details': event.get('anomaly_details', ''),
                     'user_login': event.get('user_login', ''),
                     'user_name': event.get('user_name', ''),
                     'file_id': event.get('file_id', ''),
                     'file_name': event.get('file_name', ''),
-                    'download_at_jst': event.get('download_at_jst', ''),
+                    'download_at_jst': download_time,
                     'ip_address': event.get('ip_address', '')
                 })
 

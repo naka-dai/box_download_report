@@ -56,3 +56,19 @@ data/*.html
 # Box credentials
 box_credentials.json
 box_config.json
+config.json
+
+# Windows special files
+nul
+
+# PyInstaller
+*.spec
+
+# Deployment artifacts (keep in deployment folder only)
+deployment/box_daily_update/.netlify/
+deployment/box_daily_update/data/
+deployment/box_daily_update/box_daily_update.exe
+deployment/box_daily_update/execution_log.txt
+
+# Test outputs
+*_test_output.txt

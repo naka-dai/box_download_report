@@ -189,13 +189,17 @@ class BoxDownloadBatch:
         if self.config.ALERT_ENABLED:
             logger.info("Running anomaly detection...")
 
+            # Get excluded users (system/admin accounts excluded from dashboard)
+            excluded_users = self.config.get_alert_exclude_users()
+
             # Initialize anomaly detector
             detector = AnomalyDetector(
                 download_count_threshold=self.config.ALERT_USER_DOWNLOAD_COUNT_THRESHOLD,
                 unique_files_threshold=self.config.ALERT_USER_UNIQUE_FILES_THRESHOLD,
                 offhour_threshold=self.config.ALERT_OFFHOUR_DOWNLOAD_THRESHOLD,
                 spike_window_minutes=self.config.ALERT_SPIKE_WINDOW_MINUTES,
-                spike_threshold=self.config.ALERT_SPIKE_DOWNLOAD_THRESHOLD
+                spike_threshold=self.config.ALERT_SPIKE_DOWNLOAD_THRESHOLD,
+                excluded_users=excluded_users
             )
 
             # Get business hours

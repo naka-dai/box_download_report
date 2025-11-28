@@ -272,19 +272,16 @@ def main():
         traceback.print_exc()
         return 1
 
+    # ダッシュボードのパスを取得
+    dashboard_output_dir = os.getenv("REPORT_OUTPUT_DIR", "C:\\box_reports")
+    dashboard_path = Path(dashboard_output_dir) / "dashboard_period_allinone_full.html"
+
     # ステップ3: Netlifyへデプロイ（オプション）
     skip_netlify_deploy = os.getenv("SKIP_NETLIFY_DEPLOY", "").lower() in ("1", "true", "yes")
 
     if skip_netlify_deploy:
         print("\n[ステップ3] Netlifyへのデプロイをスキップ (SKIP_NETLIFY_DEPLOY=1)")
-        print("-" * 80)
-        print("[INFO] ダッシュボードはローカルにのみ保存されました")
     else:
-        # ダッシュボードのパスを取得
-        dashboard_output_dir = os.getenv("REPORT_OUTPUT_DIR", "C:\\box_reports")
-        dashboard_path = Path(dashboard_output_dir) / "dashboard_period_allinone_full.html"
-
-        # Netlifyへデプロイ（ダッシュボードが存在する場合のみ）
         if dashboard_path.exists():
             try:
                 import update_netlify_dashboard
@@ -294,7 +291,26 @@ def main():
                 )
             except Exception as e:
                 print(f"[WARNING] Netlify deploy failed: {e}")
-                print("[INFO] ダッシュボードはローカルに保存されました")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"\n[WARNING] ダッシュボードファイルが見つかりません: {dashboard_path}")
+
+    # ステップ4: Cloudflare Pagesへデプロイ（オプション）
+    skip_cloudflare_deploy = os.getenv("SKIP_CLOUDFLARE_DEPLOY", "1").lower() in ("1", "true", "yes")
+
+    if skip_cloudflare_deploy:
+        print("\n[ステップ4] Cloudflare Pagesへのデプロイをスキップ (SKIP_CLOUDFLARE_DEPLOY=1)")
+    else:
+        if dashboard_path.exists():
+            try:
+                import update_cloudflare_dashboard
+                update_cloudflare_dashboard.deploy_to_cloudflare(
+                    dashboard_path,
+                    os.getenv("CLOUDFLARE_PAGES_PROJECT", "box-dashboard-report")
+                )
+            except Exception as e:
+                print(f"[WARNING] Cloudflare Pages deploy failed: {e}")
                 import traceback
                 traceback.print_exc()
         else:

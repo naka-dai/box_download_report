@@ -16,7 +16,8 @@ class AnomalyDetector:
         unique_files_threshold: int,
         offhour_threshold: int,
         spike_window_minutes: int,
-        spike_threshold: int
+        spike_threshold: int,
+        excluded_users: Set[str] = None
     ):
         """
         Initialize anomaly detector.
@@ -27,12 +28,17 @@ class AnomalyDetector:
             offhour_threshold: Threshold for off-hour downloads
             spike_window_minutes: Time window for spike detection (minutes)
             spike_threshold: Threshold for downloads within spike window
+            excluded_users: Set of user emails to exclude from detection
         """
         self.download_count_threshold = download_count_threshold
         self.unique_files_threshold = unique_files_threshold
         self.offhour_threshold = offhour_threshold
         self.spike_window_minutes = spike_window_minutes
         self.spike_threshold = spike_threshold
+        self.excluded_users = excluded_users or set()
+
+        if self.excluded_users:
+            logger.info(f"Anomaly detection excluding {len(self.excluded_users)} users: {self.excluded_users}")
 
     def detect_basic_anomalies(
         self,
@@ -50,6 +56,10 @@ class AnomalyDetector:
         anomalous_users = {}
 
         for user_login, stats in user_stats.items():
+            # Skip excluded users (system/admin accounts)
+            if user_login.lower() in self.excluded_users:
+                continue
+
             download_count = stats.get('download_count', 0)
             unique_files_count = stats.get('unique_files_count', 0)
 
@@ -97,6 +107,10 @@ class AnomalyDetector:
         anomalous_users = {}
 
         for user_login, count in offhour_counts.items():
+            # Skip excluded users (system/admin accounts)
+            if user_login.lower() in self.excluded_users:
+                continue
+
             if count >= self.offhour_threshold:
                 anomalous_users[user_login] = {
                     'user_login': user_login,
@@ -124,6 +138,10 @@ class AnomalyDetector:
         anomalous_users = {}
 
         for user_login, stats in user_stats.items():
+            # Skip excluded users (system/admin accounts)
+            if user_login.lower() in self.excluded_users:
+                continue
+
             events = stats.get('events', [])
 
             if len(events) < self.spike_threshold:
