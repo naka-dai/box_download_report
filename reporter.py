@@ -249,26 +249,17 @@ class CSVReporter:
             writer.writeheader()
 
             for event in all_events:
-                # Convert UTC to JST if needed
-                download_time = event.get('download_at_jst', '') or event.get('download_at_utc', '')
+                # download_at_jstのみを使用（DBには常にJSTが格納されている）
+                download_time = event.get('download_at_jst', '')
+
+                # フォーマット変換（ISO形式→表示形式）
                 if download_time:
                     try:
-                        # Parse the datetime
                         if 'T' in download_time:
-                            dt = datetime.fromisoformat(download_time.replace('Z', '+00:00'))
-                        else:
-                            dt = datetime.strptime(download_time, '%Y-%m-%d %H:%M:%S')
-
-                        # If naive datetime or UTC, convert to JST
-                        if dt.tzinfo is None:
-                            # Assume UTC if no timezone
-                            dt = dt.replace(tzinfo=timezone.utc)
-                        if dt.tzinfo == timezone.utc or (hasattr(dt.tzinfo, 'utcoffset') and dt.tzinfo.utcoffset(dt) == timedelta(0)):
-                            dt = dt.astimezone(jst)
-
-                        download_time = dt.strftime('%Y-%m-%d %H:%M:%S')
-                    except Exception as e:
-                        logger.warning(f"Failed to parse datetime {download_time}: {e}")
+                            dt = datetime.fromisoformat(download_time)
+                            download_time = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    except:
+                        pass  # そのまま使用
 
                 writer.writerow({
                     'anomaly_types': event.get('anomaly_types', ''),

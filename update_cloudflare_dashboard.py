@@ -47,18 +47,28 @@ def deploy_to_cloudflare(dashboard_path: Path, project_name: str) -> bool:
     print(f"\n[INFO] Copying dashboard to {target_file}...")
     shutil.copy2(dashboard_path, target_file)
 
+    # Create robots.txt to block search engines
+    robots_file = temp_dir / "robots.txt"
+    robots_content = """User-agent: *
+Disallow: /
+"""
+    robots_file.write_text(robots_content)
+    print(f"[INFO] Created robots.txt to block search engine indexing")
+
     # Deploy to Cloudflare Pages
     print(f"\n[INFO] Deploying to Cloudflare Pages (project: {project_name})...")
     print("-" * 80)
 
     try:
         # Use npx wrangler for deployment
+        # --branch=main を指定してProduction環境にデプロイ
         import platform
         if platform.system() == "Windows":
             cmd = [
                 "npx.cmd", "wrangler", "pages", "deploy",
                 str(temp_dir),
                 "--project-name", project_name,
+                "--branch=main",
                 "--commit-dirty=true"
             ]
         else:
@@ -66,6 +76,7 @@ def deploy_to_cloudflare(dashboard_path: Path, project_name: str) -> bool:
                 "npx", "wrangler", "pages", "deploy",
                 str(temp_dir),
                 "--project-name", project_name,
+                "--branch=main",
                 "--commit-dirty=true"
             ]
 

@@ -187,3 +187,51 @@ class BoxClient:
                 'created_at': None,
                 'modified_at': None,
             }
+
+    def upload_file(self, folder_id: str, file_path: str, file_name: str = None) -> Optional[str]:
+        """
+        Upload a file to a Box folder.
+
+        Args:
+            folder_id: Box folder ID to upload to
+            file_path: Local file path to upload
+            file_name: Optional file name (uses original name if not specified)
+
+        Returns:
+            Uploaded file ID, or None if upload failed
+        """
+        if not self.client:
+            raise RuntimeError("Box client not initialized")
+
+        try:
+            file_path_obj = Path(file_path)
+            if not file_path_obj.exists():
+                logger.error(f"File not found: {file_path}")
+                return None
+
+            upload_name = file_name if file_name else file_path_obj.name
+
+            # Check if file with same name already exists
+            folder = self.client.folder(folder_id)
+            items = folder.get_items()
+            existing_file_id = None
+
+            for item in items:
+                if item.type == 'file' and item.name == upload_name:
+                    existing_file_id = item.id
+                    break
+
+            if existing_file_id:
+                # Upload new version
+                updated_file = self.client.file(existing_file_id).update_contents(file_path)
+                logger.info(f"Updated existing file: {upload_name} (ID: {updated_file.id})")
+                return updated_file.id
+            else:
+                # Upload new file
+                uploaded_file = folder.upload(file_path, file_name=upload_name)
+                logger.info(f"Uploaded new file: {upload_name} (ID: {uploaded_file.id})")
+                return uploaded_file.id
+
+        except Exception as e:
+            logger.error(f"Failed to upload file {file_path} to folder {folder_id}: {e}")
+            return None

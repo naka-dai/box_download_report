@@ -361,6 +361,42 @@ CSVの`anomaly_types`列には検知されたアラートタイプが記録さ�
 
 実行ログは `box_download_batch.log` に出力されます。
 
+## 重要：EXE更新手順
+
+### ⚠️ EXEリビルド後は必ずdeploymentフォルダにコピーすること
+
+**絶対に忘れてはいけない手順**:
+
+1. `pyinstaller` でEXEをリビルド
+2. **必ず** `dist\box_daily_update.exe` を `deployment\box_daily_update\` にコピー
+3. **コピー後、タイムスタンプとファイルサイズで正しくコピーされたことを必ず確認**（これが最重要）
+
+```powershell
+# コピー方法（どちらでもOK）
+# 方法1: cmd /c copy
+cmd /c copy "dist\box_daily_update.exe" "deployment\box_daily_update\box_daily_update.exe"
+
+# 方法2: PowerShell Copy-Item
+Copy-Item -Path "dist\box_daily_update.exe" -Destination "deployment\box_daily_update\box_daily_update.exe" -Force
+
+# ★★★ 必須：コピー後の確認（これを怠ると事故になる） ★★★
+Get-Item "deployment\box_daily_update\box_daily_update.exe" | Select-Object Name, LastWriteTime, Length
+# distフォルダのEXEと同じタイムスタンプ・サイズであることを目視確認すること
+Get-Item "dist\box_daily_update.exe" | Select-Object Name, LastWriteTime, Length
+```
+
+**過去の事故（2025-11-29）**:
+- EXEリビルド後、コピーコマンドは実行したが**成功したかどうかの確認を怠った**
+- 結果、古いEXEがタスクスケジューラで実行されてアラートメールが誤送信された
+- **教訓**: コピーコマンド自体は `cmd /c copy` でも `Copy-Item` でも問題ない。**重要なのはコピー後にタイムスタンプを確認すること**
+
+### タスクスケジューラ実行パス
+
+タスクスケジューラは以下のバッチファイルを実行:
+- `C:\dev\python\box_download_report\deployment\box_daily_update\run_with_netlify_deploy.bat`
+
+このバッチは同じディレクトリの `box_daily_update.exe` を呼び出す。
+
 ## トラブルシューティング
 
 ### Box API 認証エラー

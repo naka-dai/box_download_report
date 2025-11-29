@@ -52,6 +52,11 @@ def deploy_to_netlify(dashboard_path: Path, site_id: str) -> bool:
         f.write('  publish = "."\n')
     print(f"[INFO] Created netlify.toml to skip build process")
 
+    # Create robots.txt to block search engines
+    robots_file = temp_dir / "robots.txt"
+    robots_file.write_text("User-agent: *\nDisallow: /\n")
+    print(f"[INFO] Created robots.txt to block search engine indexing")
+
     # Deploy to Netlify
     print(f"\n[INFO] Deploying to Netlify (site: {site_id})...")
     print("-" * 80)

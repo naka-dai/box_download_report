@@ -207,7 +207,7 @@ def collect_all_data(cursor, admin_params, placeholders, period_clause, period_k
         '''
         cursor.execute(file_clause, (file_id,) + admin_params)
         users = cursor.fetchall()
-        user_names = [f"{name} ({email})" for name, email in users]
+        user_names = [name for name, email in users]  # メールアドレスは非表示
 
         top_files_integrated.append((file_name, folder, dl_count, pv_count, total, unique_users_count, user_names))
 
@@ -352,7 +352,7 @@ def collect_all_data(cursor, admin_params, placeholders, period_clause, period_k
         '''
         cursor.execute(file_clause, (file_id,) + admin_params)
         users = cursor.fetchall()
-        user_names = [f"{name} ({email})" for name, email in users]
+        user_names = [name for name, email in users]  # メールアドレスは非表示
 
         top_files_download.append((file_name, folder, count, unique_users_count, user_names))
 
@@ -497,7 +497,7 @@ def collect_all_data(cursor, admin_params, placeholders, period_clause, period_k
         '''
         cursor.execute(file_clause, (file_id,) + admin_params)
         users = cursor.fetchall()
-        user_names = [f"{name} ({email})" for name, email in users]
+        user_names = [name for name, email in users]  # メールアドレスは非表示
 
         top_files_preview.append((file_name, folder, count, unique_users_count, user_names))
 
@@ -793,7 +793,6 @@ def generate_period_content(period_id, period_name, stats):
                             <tr>
                                 <th style="width: 50px;">順位</th>
                                 <th>ユーザー名</th>
-                                <th>メールアドレス</th>
                                 <th style="text-align: right;">ダウンロード</th>
                                 <th style="text-align: right;">プレビュー</th>
                                 <th style="text-align: right;">合計</th>
@@ -804,14 +803,13 @@ def generate_period_content(period_id, period_name, stats):
                         <tbody id="topUsersIntegratedTable_{period_id}">
 '''
 
-    for i, (name, email, dl_count, pv_count, total, files) in enumerate(stats['top_users_integrated'], 1):
+    for i, (name, _email, dl_count, pv_count, total, files) in enumerate(stats['top_users_integrated'], 1):
         duplication_rate = ((total - files) / total * 100) if total > 0 else 0
         show_class = 'show' if i <= 10 else ''
 
         html += f'''                            <tr class="user-row {show_class}" data-rank="{i}">
                                 <td><span class="rank">{i}</span></td>
                                 <td>{name}</td>
-                                <td>{email}</td>
                                 <td style="text-align: right;"><span class="badge download">{dl_count:,}</span></td>
                                 <td style="text-align: right;"><span class="badge preview">{pv_count:,}</span></td>
                                 <td style="text-align: right; font-weight: bold;">{total:,}</td>
@@ -914,7 +912,6 @@ def generate_period_content(period_id, period_name, stats):
                             <tr>
                                 <th style="width: 50px;">順位</th>
                                 <th>ユーザー名</th>
-                                <th>メールアドレス</th>
                                 <th style="text-align: right;">ダウンロード数</th>
                                 <th style="text-align: right;">ユニークファイル</th>
                                 <th style="text-align: right;">重複率</th>
@@ -923,14 +920,13 @@ def generate_period_content(period_id, period_name, stats):
                         <tbody id="topUsersDownloadTable_''' + period_id + '''">
 '''
 
-    for i, (name, email, count, files) in enumerate(stats['top_users_download'], 1):
+    for i, (name, _email, count, files) in enumerate(stats['top_users_download'], 1):
         duplication_rate = ((count - files) / count * 100) if count > 0 else 0
         show_class = 'show' if i <= 10 else ''
 
         html += f'''                            <tr class="user-row {show_class}" data-rank="{i}">
                                 <td><span class="rank">{i}</span></td>
                                 <td>{name}</td>
-                                <td>{email}</td>
                                 <td style="text-align: right; font-weight: bold;">{count:,}</td>
                                 <td style="text-align: right;">{files:,}</td>
                                 <td style="text-align: right; color: {"#e74c3c" if duplication_rate > 30 else "#27ae60"};">{duplication_rate:.1f}%</td>
@@ -1027,7 +1023,6 @@ def generate_period_content(period_id, period_name, stats):
                             <tr>
                                 <th style="width: 50px;">順位</th>
                                 <th>ユーザー名</th>
-                                <th>メールアドレス</th>
                                 <th style="text-align: right;">プレビュー数</th>
                                 <th style="text-align: right;">ユニークファイル</th>
                                 <th style="text-align: right;">重複率</th>
@@ -1036,14 +1031,13 @@ def generate_period_content(period_id, period_name, stats):
                         <tbody id="topUsersPreviewTable_''' + period_id + '''">
 '''
 
-    for i, (name, email, count, files) in enumerate(stats['top_users_preview'], 1):
+    for i, (name, _email, count, files) in enumerate(stats['top_users_preview'], 1):
         duplication_rate = ((count - files) / count * 100) if count > 0 else 0
         show_class = 'show' if i <= 10 else ''
 
         html += f'''                            <tr class="user-row {show_class}" data-rank="{i}">
                                 <td><span class="rank">{i}</span></td>
                                 <td>{name}</td>
-                                <td>{email}</td>
                                 <td style="text-align: right; font-weight: bold;">{count:,}</td>
                                 <td style="text-align: right;">{files:,}</td>
                                 <td style="text-align: right; color: {"#e74c3c" if duplication_rate > 30 else "#27ae60"};">{duplication_rate:.1f}%</td>

@@ -106,9 +106,9 @@ class CSVImporter:
                         file_size = 0
 
                     # Build event dict for database
-                    # Convert datetime to ISO format strings
-                    download_at_utc = download_at.strftime('%Y-%m-%dT%H:%M:%S')
+                    # CSV datetime is in JST - store JST in both columns for simplicity
                     download_at_jst = download_at.strftime('%Y-%m-%dT%H:%M:%S')
+                    download_at_utc = download_at_jst  # JSTで統一（UTC列も同じ値）
 
                     # Create unique event_id from row data (include event_type to avoid collision)
                     event_id = f"csv_{user_id}_{file_id}_{event_type}_{download_at.strftime('%Y%m%d%H%M%S')}"

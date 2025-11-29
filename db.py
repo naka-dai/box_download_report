@@ -133,6 +133,22 @@ class Database:
             )
         """)
 
+        # Table: alert_history (アラート送信履歴 - 重複防止用)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alert_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                alert_date TEXT NOT NULL,
+                alert_type TEXT NOT NULL,
+                anomaly_count INTEGER,
+                csv_path TEXT,
+                box_file_id TEXT,
+                email_sent INTEGER DEFAULT 0,
+                box_uploaded INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(alert_date, alert_type)
+            )
+        """)
+
         self.connection.commit()
         logger.info("Database tables initialized successfully")
 
@@ -353,3 +369,98 @@ class Database:
         """, (month,))
 
         return [dict(row) for row in cursor.fetchall()]
+
+    def check_alert_sent(self, alert_date: str, alert_type: str = 'daily') -> bool:
+        """
+        Check if an alert has already been sent for the given date.
+
+        Args:
+            alert_date: Date in YYYY-MM-DD format
+            alert_type: Type of alert ('daily', 'confirmed', 'tentative')
+
+        Returns:
+            True if alert was already sent, False otherwise
+        """
+        if not self.connection:
+            raise RuntimeError("Database connection not established")
+
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT id FROM alert_history
+            WHERE alert_date = ? AND alert_type = ? AND email_sent = 1
+        """, (alert_date, alert_type))
+
+        return cursor.fetchone() is not None
+
+    def check_alert_uploaded(self, alert_date: str, alert_type: str = 'daily') -> bool:
+        """
+        Check if an alert CSV has already been uploaded to Box for the given date.
+
+        Args:
+            alert_date: Date in YYYY-MM-DD format
+            alert_type: Type of alert ('daily', 'confirmed', 'tentative')
+
+        Returns:
+            True if already uploaded, False otherwise
+        """
+        if not self.connection:
+            raise RuntimeError("Database connection not established")
+
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT id FROM alert_history
+            WHERE alert_date = ? AND alert_type = ? AND box_uploaded = 1
+        """, (alert_date, alert_type))
+
+        return cursor.fetchone() is not None
+
+    def record_alert_sent(self, alert_date: str, alert_type: str, anomaly_count: int,
+                          csv_path: str = None) -> None:
+        """
+        Record that an alert email has been sent.
+
+        Args:
+            alert_date: Date in YYYY-MM-DD format
+            alert_type: Type of alert ('daily', 'confirmed', 'tentative')
+            anomaly_count: Number of anomalies detected
+            csv_path: Path to the CSV file attached
+        """
+        if not self.connection:
+            raise RuntimeError("Database connection not established")
+
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO alert_history (alert_date, alert_type, anomaly_count, csv_path, email_sent)
+            VALUES (?, ?, ?, ?, 1)
+            ON CONFLICT(alert_date, alert_type) DO UPDATE SET
+                anomaly_count = excluded.anomaly_count,
+                csv_path = excluded.csv_path,
+                email_sent = 1,
+                created_at = CURRENT_TIMESTAMP
+        """, (alert_date, alert_type, anomaly_count, csv_path))
+        self.connection.commit()
+        logger.info(f"Alert recorded: {alert_date} ({alert_type}), {anomaly_count} anomalies")
+
+    def record_alert_uploaded(self, alert_date: str, alert_type: str, box_file_id: str) -> None:
+        """
+        Record that an alert CSV has been uploaded to Box.
+
+        Args:
+            alert_date: Date in YYYY-MM-DD format
+            alert_type: Type of alert ('daily', 'confirmed', 'tentative')
+            box_file_id: Box file ID of the uploaded file
+        """
+        if not self.connection:
+            raise RuntimeError("Database connection not established")
+
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            INSERT INTO alert_history (alert_date, alert_type, box_file_id, box_uploaded)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(alert_date, alert_type) DO UPDATE SET
+                box_file_id = excluded.box_file_id,
+                box_uploaded = 1,
+                created_at = CURRENT_TIMESTAMP
+        """, (alert_date, alert_type, box_file_id))
+        self.connection.commit()
+        logger.info(f"Box upload recorded: {alert_date} ({alert_type}), file_id={box_file_id}")

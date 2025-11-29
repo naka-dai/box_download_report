@@ -297,128 +297,158 @@ def main():
             from datetime import timedelta
             yesterday = datetime.now() - timedelta(days=1)
             date_str = yesterday.strftime("%Y%m%d")
+            yesterday_str_hyphen = yesterday.strftime("%Y-%m-%d")
             period_type = "daily"
 
-            # データベースから前日のイベントを取得
+            # アラート送信履歴を確認（重複防止）
             with Database(db_path) as db:
-                # 前日のダウンロードイベントを取得
-                yesterday_str = yesterday.strftime("%Y-%m-%d")
-                today_str = datetime.now().strftime("%Y-%m-%d")
-                events = db.get_downloads_by_period(yesterday_str, today_str)
+                db.initialize_tables()  # alert_historyテーブルを確実に作成
+                alert_already_sent = db.check_alert_sent(yesterday_str_hyphen, period_type)
+                alert_already_uploaded = db.check_alert_uploaded(yesterday_str_hyphen, period_type)
 
-            if events:
-                print(f"[INFO] 前日({yesterday_str})のイベント数: {len(events)}")
-
-                # 集計
-                aggregator = DataAggregator()
-                user_stats = aggregator.aggregate_by_user(events)
-
-                # 除外ユーザー
-                excluded_users = config.get_alert_exclude_users()
-
-                # アラート検知
-                detector = AnomalyDetector(
-                    download_count_threshold=config.ALERT_USER_DOWNLOAD_COUNT_THRESHOLD,
-                    unique_files_threshold=config.ALERT_USER_UNIQUE_FILES_THRESHOLD,
-                    offhour_threshold=config.ALERT_OFFHOUR_DOWNLOAD_THRESHOLD,
-                    spike_window_minutes=config.ALERT_SPIKE_WINDOW_MINUTES,
-                    spike_threshold=config.ALERT_SPIKE_DOWNLOAD_THRESHOLD,
-                    excluded_users=excluded_users
-                )
-
-                # 営業時間外ダウンロードをカウント
-                bh_start_hour, bh_start_min, bh_end_hour, bh_end_min = config.get_business_hours_range()
-                offhour_counts = aggregator.count_offhour_downloads_by_user(
-                    events, bh_start_hour, bh_start_min, bh_end_hour, bh_end_min
-                )
-
-                # アラート検知実行
-                anomalous_users = detector.detect_all_anomalies(user_stats, offhour_counts)
-
-                if anomalous_users:
-                    print(f"[WARNING] {len(anomalous_users)}人のユーザーでアラートを検知")
-
-                    # サマリー生成
-                    anomaly_summary = detector.get_anomaly_summary(anomalous_users)
-                    print(anomaly_summary)
-
-                    # 重大度を計算（閾値の何倍かを計算）
-                    max_ratio = 1.0
-                    for email, user_data in anomalous_users.items():
-                        # ダウンロード数閾値の超過率
-                        if user_data.get('download_count', 0) > 0 and config.ALERT_USER_DOWNLOAD_COUNT_THRESHOLD > 0:
-                            ratio = user_data['download_count'] / config.ALERT_USER_DOWNLOAD_COUNT_THRESHOLD
-                            max_ratio = max(max_ratio, ratio)
-                        # ユニークファイル数閾値の超過率
-                        if user_data.get('unique_files_count', 0) > 0 and config.ALERT_USER_UNIQUE_FILES_THRESHOLD > 0:
-                            ratio = user_data['unique_files_count'] / config.ALERT_USER_UNIQUE_FILES_THRESHOLD
-                            max_ratio = max(max_ratio, ratio)
-                        # 時間外ダウンロード閾値の超過率
-                        if user_data.get('offhour_downloads', 0) > 0 and config.ALERT_OFFHOUR_DOWNLOAD_THRESHOLD > 0:
-                            ratio = user_data['offhour_downloads'] / config.ALERT_OFFHOUR_DOWNLOAD_THRESHOLD
-                            max_ratio = max(max_ratio, ratio)
-
-                    # 重大度レベルを決定（10倍以上=critical, 5倍以上=high, それ以外=normal）
-                    if max_ratio >= 10:
-                        severity = 'critical'
-                        print(f"[ALERT] *** 重大度: 緊急（閾値の {max_ratio:.1f} 倍超過）***")
-                    elif max_ratio >= 5:
-                        severity = 'high'
-                        print(f"[ALERT] * 重大度: 警告（閾値の {max_ratio:.1f} 倍超過）")
-                    else:
-                        severity = 'normal'
-                        print(f"[INFO] 重大度: 通常（閾値の {max_ratio:.1f} 倍超過）")
-
-                    severity_info = {
-                        'level': severity,
-                        'max_ratio': max_ratio
-                    }
-
-                    # CSVレポート生成
-                    reporter = CSVReporter(config.ANOMALY_OUTPUT_DIR)
-                    anomaly_csv_path = reporter.write_anomaly_details(
-                        anomalous_users,
-                        date_str,
-                        period_type,
-                        config.ANOMALY_OUTPUT_DIR,
-                        max_rows=config.ALERT_ATTACHMENT_MAX_ROWS
-                    )
-                    print(f"[INFO] アラート詳細CSV: {anomaly_csv_path}")
-
-                    # メール送信
-                    try:
-                        mailer = Mailer(
-                            smtp_host=config.SMTP_HOST,
-                            smtp_port=config.SMTP_PORT,
-                            smtp_user=config.SMTP_USER,
-                            smtp_password=config.SMTP_PASSWORD,
-                            use_tls=config.SMTP_USE_TLS
-                        )
-
-                        to_addrs = config.get_mail_to_list()
-
-                        success = mailer.send_anomaly_alert(
-                            from_addr=config.ALERT_MAIL_FROM,
-                            to_addrs=to_addrs,
-                            subject_prefix=config.ALERT_MAIL_SUBJECT_PREFIX,
-                            date_str=f"{date_str} ({period_type})",
-                            anomaly_summary=anomaly_summary,
-                            attachment_paths=[anomaly_csv_path],
-                            severity_info=severity_info
-                        )
-
-                        if success:
-                            print("[OK] アラートメール送信完了")
-                        else:
-                            print("[ERROR] アラートメール送信失敗")
-                    except Exception as e:
-                        print(f"[ERROR] メール送信エラー: {e}")
-                        import traceback
-                        traceback.print_exc()
-                else:
-                    print("[INFO] アラート対象のユーザーはいません")
+            if alert_already_sent and alert_already_uploaded:
+                print(f"[INFO] {yesterday_str_hyphen}のアラートは既に送信・アップロード済みです（スキップ）")
             else:
-                print(f"[INFO] 前日({yesterday_str})のイベントがないため、アラート検知をスキップ")
+                # データベースから前日のイベントを取得
+                with Database(db_path) as db:
+                    yesterday_str = yesterday.strftime("%Y-%m-%d")
+                    today_str = datetime.now().strftime("%Y-%m-%d")
+                    events = db.get_downloads_by_period(yesterday_str, today_str)
+
+                if not events:
+                    print(f"[INFO] 前日({yesterday_str})のイベントがないため、アラート検知をスキップ")
+                else:
+                    print(f"[INFO] 前日({yesterday_str})のイベント数: {len(events)}")
+
+                    # 集計
+                    aggregator = DataAggregator()
+                    user_stats = aggregator.aggregate_by_user(events)
+
+                    # 除外ユーザー
+                    excluded_users = config.get_alert_exclude_users()
+
+                    # アラート検知
+                    detector = AnomalyDetector(
+                        download_count_threshold=config.ALERT_USER_DOWNLOAD_COUNT_THRESHOLD,
+                        unique_files_threshold=config.ALERT_USER_UNIQUE_FILES_THRESHOLD,
+                        offhour_threshold=config.ALERT_OFFHOUR_DOWNLOAD_THRESHOLD,
+                        spike_window_minutes=config.ALERT_SPIKE_WINDOW_MINUTES,
+                        spike_threshold=config.ALERT_SPIKE_DOWNLOAD_THRESHOLD,
+                        excluded_users=excluded_users
+                    )
+
+                    # 営業時間外ダウンロードをカウント
+                    bh_start_hour, bh_start_min, bh_end_hour, bh_end_min = config.get_business_hours_range()
+                    offhour_counts = aggregator.count_offhour_downloads_by_user(
+                        events, bh_start_hour, bh_start_min, bh_end_hour, bh_end_min
+                    )
+
+                    # アラート検知実行
+                    anomalous_users = detector.detect_all_anomalies(user_stats, offhour_counts)
+
+                    if not anomalous_users:
+                        print("[INFO] アラート対象のユーザーはいません")
+                    else:
+                        print(f"[WARNING] {len(anomalous_users)}人のユーザーでアラートを検知")
+
+                        # サマリー生成
+                        anomaly_summary = detector.get_anomaly_summary(anomalous_users)
+                        print(anomaly_summary)
+
+                        # 重大度を計算（閾値の何倍かを計算）
+                        max_ratio = 1.0
+                        for email, user_data in anomalous_users.items():
+                            if user_data.get('download_count', 0) > 0 and config.ALERT_USER_DOWNLOAD_COUNT_THRESHOLD > 0:
+                                ratio = user_data['download_count'] / config.ALERT_USER_DOWNLOAD_COUNT_THRESHOLD
+                                max_ratio = max(max_ratio, ratio)
+                            if user_data.get('unique_files_count', 0) > 0 and config.ALERT_USER_UNIQUE_FILES_THRESHOLD > 0:
+                                ratio = user_data['unique_files_count'] / config.ALERT_USER_UNIQUE_FILES_THRESHOLD
+                                max_ratio = max(max_ratio, ratio)
+                            if user_data.get('offhour_downloads', 0) > 0 and config.ALERT_OFFHOUR_DOWNLOAD_THRESHOLD > 0:
+                                ratio = user_data['offhour_downloads'] / config.ALERT_OFFHOUR_DOWNLOAD_THRESHOLD
+                                max_ratio = max(max_ratio, ratio)
+
+                        # 重大度レベルを決定
+                        if max_ratio >= 10:
+                            severity = 'critical'
+                            print(f"[ALERT] *** 重大度: 緊急（閾値の {max_ratio:.1f} 倍超過）***")
+                        elif max_ratio >= 5:
+                            severity = 'high'
+                            print(f"[ALERT] * 重大度: 警告（閾値の {max_ratio:.1f} 倍超過）")
+                        else:
+                            severity = 'normal'
+                            print(f"[INFO] 重大度: 通常（閾値の {max_ratio:.1f} 倍超過）")
+
+                        severity_info = {'level': severity, 'max_ratio': max_ratio}
+
+                        # CSVレポート生成
+                        reporter = CSVReporter(config.ANOMALY_OUTPUT_DIR)
+                        anomaly_csv_path = reporter.write_anomaly_details(
+                            anomalous_users, date_str, period_type,
+                            config.ANOMALY_OUTPUT_DIR, max_rows=config.ALERT_ATTACHMENT_MAX_ROWS
+                        )
+                        print(f"[INFO] アラート詳細CSV: {anomaly_csv_path}")
+
+                        # メール送信（未送信の場合のみ）
+                        if not alert_already_sent:
+                            try:
+                                mailer = Mailer(
+                                    smtp_host=config.SMTP_HOST,
+                                    smtp_port=config.SMTP_PORT,
+                                    smtp_user=config.SMTP_USER,
+                                    smtp_password=config.SMTP_PASSWORD,
+                                    use_tls=config.SMTP_USE_TLS
+                                )
+                                to_addrs = config.get_mail_to_list()
+                                success = mailer.send_anomaly_alert(
+                                    from_addr=config.ALERT_MAIL_FROM,
+                                    to_addrs=to_addrs,
+                                    subject_prefix=config.ALERT_MAIL_SUBJECT_PREFIX,
+                                    date_str=f"{date_str} ({period_type})",
+                                    anomaly_summary=anomaly_summary,
+                                    attachment_paths=[anomaly_csv_path],
+                                    severity_info=severity_info
+                                )
+                                if success:
+                                    print("[OK] アラートメール送信完了")
+                                    # 送信履歴を記録
+                                    with Database(db_path) as db:
+                                        db.record_alert_sent(yesterday_str_hyphen, period_type,
+                                                           len(anomalous_users), anomaly_csv_path)
+                                else:
+                                    print("[ERROR] アラートメール送信失敗")
+                            except Exception as e:
+                                print(f"[ERROR] メール送信エラー: {e}")
+                                import traceback
+                                traceback.print_exc()
+                        else:
+                            print(f"[INFO] {yesterday_str_hyphen}のメールは既に送信済み（スキップ）")
+
+                        # BoxにCSVをアップロード（未アップロードの場合のみ）
+                        if not alert_already_uploaded:
+                            anomaly_log_folder_id = os.getenv("ANOMALY_LOG_FOLDER_ID", "353439076724")
+                            if anomaly_log_folder_id:
+                                try:
+                                    from box_client import BoxClient
+                                    box_config_path = os.path.join(application_path, os.getenv("BOX_CONFIG_PATH", "config.json"))
+                                    box_client = BoxClient(box_config_path)
+                                    uploaded_file_id = box_client.upload_file(
+                                        folder_id=anomaly_log_folder_id,
+                                        file_path=anomaly_csv_path
+                                    )
+                                    if uploaded_file_id:
+                                        print(f"[OK] BoxにCSVアップロード完了 (フォルダID: {anomaly_log_folder_id}, ファイルID: {uploaded_file_id})")
+                                        # アップロード履歴を記録
+                                        with Database(db_path) as db:
+                                            db.record_alert_uploaded(yesterday_str_hyphen, period_type, uploaded_file_id)
+                                    else:
+                                        print("[ERROR] BoxへのCSVアップロード失敗")
+                                except Exception as box_e:
+                                    print(f"[ERROR] Boxアップロードエラー: {box_e}")
+                                    import traceback
+                                    traceback.print_exc()
+                        else:
+                            print(f"[INFO] {yesterday_str_hyphen}のBoxアップロードは既に完了（スキップ）")
 
         except Exception as e:
             print(f"[ERROR] アラート検知中にエラーが発生しました: {e}")
