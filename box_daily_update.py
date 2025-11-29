@@ -276,11 +276,167 @@ def main():
     dashboard_output_dir = os.getenv("REPORT_OUTPUT_DIR", "C:\\box_reports")
     dashboard_path = Path(dashboard_output_dir) / "dashboard_period_allinone_full.html"
 
-    # ステップ3: Netlifyへデプロイ（オプション）
+    # ステップ2.5: アラート検知（オプション）
+    alert_enabled = os.getenv("ALERT_ENABLED", "").lower() in ("1", "true", "yes")
+
+    if alert_enabled:
+        print("\n[ステップ2.5] アラート検知中...")
+        print("-" * 80)
+        try:
+            from config import Config
+            from db import Database
+            from anomaly import AnomalyDetector
+            from aggregator import DataAggregator
+            from reporter import CSVReporter
+            from mailer import Mailer
+
+            config = Config()
+            db_path = os.getenv("DB_PATH", "C:\\box_reports\\box_audit.db")
+
+            # 前日の日付（BoxのCSVは前日分が翌日にエクスポートされるため）
+            from datetime import timedelta
+            yesterday = datetime.now() - timedelta(days=1)
+            date_str = yesterday.strftime("%Y%m%d")
+            period_type = "daily"
+
+            # データベースから前日のイベントを取得
+            with Database(db_path) as db:
+                # 前日のダウンロードイベントを取得
+                yesterday_str = yesterday.strftime("%Y-%m-%d")
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                events = db.get_downloads_by_period(yesterday_str, today_str)
+
+            if events:
+                print(f"[INFO] 前日({yesterday_str})のイベント数: {len(events)}")
+
+                # 集計
+                aggregator = DataAggregator()
+                user_stats = aggregator.aggregate_by_user(events)
+
+                # 除外ユーザー
+                excluded_users = config.get_alert_exclude_users()
+
+                # アラート検知
+                detector = AnomalyDetector(
+                    download_count_threshold=config.ALERT_USER_DOWNLOAD_COUNT_THRESHOLD,
+                    unique_files_threshold=config.ALERT_USER_UNIQUE_FILES_THRESHOLD,
+                    offhour_threshold=config.ALERT_OFFHOUR_DOWNLOAD_THRESHOLD,
+                    spike_window_minutes=config.ALERT_SPIKE_WINDOW_MINUTES,
+                    spike_threshold=config.ALERT_SPIKE_DOWNLOAD_THRESHOLD,
+                    excluded_users=excluded_users
+                )
+
+                # 営業時間外ダウンロードをカウント
+                bh_start_hour, bh_start_min, bh_end_hour, bh_end_min = config.get_business_hours_range()
+                offhour_counts = aggregator.count_offhour_downloads_by_user(
+                    events, bh_start_hour, bh_start_min, bh_end_hour, bh_end_min
+                )
+
+                # アラート検知実行
+                anomalous_users = detector.detect_all_anomalies(user_stats, offhour_counts)
+
+                if anomalous_users:
+                    print(f"[WARNING] {len(anomalous_users)}人のユーザーでアラートを検知")
+
+                    # サマリー生成
+                    anomaly_summary = detector.get_anomaly_summary(anomalous_users)
+                    print(anomaly_summary)
+
+                    # 重大度を計算（閾値の何倍かを計算）
+                    max_ratio = 1.0
+                    for email, user_data in anomalous_users.items():
+                        # ダウンロード数閾値の超過率
+                        if user_data.get('download_count', 0) > 0 and config.ALERT_USER_DOWNLOAD_COUNT_THRESHOLD > 0:
+                            ratio = user_data['download_count'] / config.ALERT_USER_DOWNLOAD_COUNT_THRESHOLD
+                            max_ratio = max(max_ratio, ratio)
+                        # ユニークファイル数閾値の超過率
+                        if user_data.get('unique_files_count', 0) > 0 and config.ALERT_USER_UNIQUE_FILES_THRESHOLD > 0:
+                            ratio = user_data['unique_files_count'] / config.ALERT_USER_UNIQUE_FILES_THRESHOLD
+                            max_ratio = max(max_ratio, ratio)
+                        # 時間外ダウンロード閾値の超過率
+                        if user_data.get('offhour_downloads', 0) > 0 and config.ALERT_OFFHOUR_DOWNLOAD_THRESHOLD > 0:
+                            ratio = user_data['offhour_downloads'] / config.ALERT_OFFHOUR_DOWNLOAD_THRESHOLD
+                            max_ratio = max(max_ratio, ratio)
+
+                    # 重大度レベルを決定（10倍以上=critical, 5倍以上=high, それ以外=normal）
+                    if max_ratio >= 10:
+                        severity = 'critical'
+                        print(f"[ALERT] *** 重大度: 緊急（閾値の {max_ratio:.1f} 倍超過）***")
+                    elif max_ratio >= 5:
+                        severity = 'high'
+                        print(f"[ALERT] * 重大度: 警告（閾値の {max_ratio:.1f} 倍超過）")
+                    else:
+                        severity = 'normal'
+                        print(f"[INFO] 重大度: 通常（閾値の {max_ratio:.1f} 倍超過）")
+
+                    severity_info = {
+                        'level': severity,
+                        'max_ratio': max_ratio
+                    }
+
+                    # CSVレポート生成
+                    reporter = CSVReporter(config.ANOMALY_OUTPUT_DIR)
+                    anomaly_csv_path = reporter.write_anomaly_details(
+                        anomalous_users,
+                        date_str,
+                        period_type,
+                        config.ANOMALY_OUTPUT_DIR,
+                        max_rows=config.ALERT_ATTACHMENT_MAX_ROWS
+                    )
+                    print(f"[INFO] アラート詳細CSV: {anomaly_csv_path}")
+
+                    # メール送信
+                    try:
+                        mailer = Mailer(
+                            smtp_host=config.SMTP_HOST,
+                            smtp_port=config.SMTP_PORT,
+                            smtp_user=config.SMTP_USER,
+                            smtp_password=config.SMTP_PASSWORD,
+                            use_tls=config.SMTP_USE_TLS
+                        )
+
+                        to_addrs = config.get_mail_to_list()
+
+                        success = mailer.send_anomaly_alert(
+                            from_addr=config.ALERT_MAIL_FROM,
+                            to_addrs=to_addrs,
+                            subject_prefix=config.ALERT_MAIL_SUBJECT_PREFIX,
+                            date_str=f"{date_str} ({period_type})",
+                            anomaly_summary=anomaly_summary,
+                            attachment_paths=[anomaly_csv_path],
+                            severity_info=severity_info
+                        )
+
+                        if success:
+                            print("[OK] アラートメール送信完了")
+                        else:
+                            print("[ERROR] アラートメール送信失敗")
+                    except Exception as e:
+                        print(f"[ERROR] メール送信エラー: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print("[INFO] アラート対象のユーザーはいません")
+            else:
+                print(f"[INFO] 前日({yesterday_str})のイベントがないため、アラート検知をスキップ")
+
+        except Exception as e:
+            print(f"[ERROR] アラート検知中にエラーが発生しました: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print("\n[ステップ2.5] アラート検知をスキップ (ALERT_ENABLED=0)")
+
+    # ステップ3: Netlifyへデプロイ（オプション、平日のみ）
     skip_netlify_deploy = os.getenv("SKIP_NETLIFY_DEPLOY", "").lower() in ("1", "true", "yes")
+
+    # 土日はNetlifyデプロイをスキップ（Netlify無料枠節約のため）
+    is_weekend = datetime.now().weekday() >= 5  # 5=土曜, 6=日曜
 
     if skip_netlify_deploy:
         print("\n[ステップ3] Netlifyへのデプロイをスキップ (SKIP_NETLIFY_DEPLOY=1)")
+    elif is_weekend:
+        print("\n[ステップ3] Netlifyへのデプロイをスキップ（土日は無料枠節約のためスキップ）")
     else:
         if dashboard_path.exists():
             try:

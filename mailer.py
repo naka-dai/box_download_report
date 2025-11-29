@@ -106,7 +106,8 @@ class Mailer:
         subject_prefix: str,
         date_str: str,
         anomaly_summary: str,
-        attachment_paths: List[str] = None
+        attachment_paths: List[str] = None,
+        severity_info: Dict[str, Any] = None
     ) -> bool:
         """
         Send anomaly alert email with CSV attachments.
@@ -118,6 +119,7 @@ class Mailer:
             date_str: Date string for subject
             anomaly_summary: Summary text for email body
             attachment_paths: List of file paths to attach
+            severity_info: Severity information dict with 'level' and 'max_ratio'
 
         Returns:
             True if sent successfully, False otherwise
@@ -127,14 +129,25 @@ class Mailer:
             return False
 
         try:
+            # Determine severity level
+            severity = severity_info.get('level', 'normal') if severity_info else 'normal'
+            max_ratio = severity_info.get('max_ratio', 1.0) if severity_info else 1.0
+
             # Create message
             msg = MIMEMultipart()
             msg['From'] = from_addr
             msg['To'] = ', '.join(to_addrs)
-            msg['Subject'] = f"{subject_prefix} Box Download Anomalies Detected - {date_str}"
+
+            # Create subject based on severity
+            if severity == 'critical':
+                msg['Subject'] = f"🚨🚨🚨 {subject_prefix} 【緊急】大量ダウンロード検知（閾値の{max_ratio:.0f}倍超過）- {date_str} 🚨🚨🚨"
+            elif severity == 'high':
+                msg['Subject'] = f"⚠️ {subject_prefix} 【警告】異常ダウンロード検知（閾値の{max_ratio:.0f}倍超過）- {date_str}"
+            else:
+                msg['Subject'] = f"{subject_prefix} Box Download Anomalies Detected - {date_str}"
 
             # Create email body
-            body = self._create_email_body(date_str, anomaly_summary)
+            body = self._create_email_body(date_str, anomaly_summary, severity=severity, max_ratio=max_ratio)
             msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
             # Attach files
@@ -159,18 +172,81 @@ class Mailer:
             logger.error(f"Failed to send anomaly alert email: {e}")
             return False
 
-    def _create_email_body(self, date_str: str, anomaly_summary: str) -> str:
+    def _create_email_body(
+        self,
+        date_str: str,
+        anomaly_summary: str,
+        severity: str = 'normal',
+        max_ratio: float = 1.0
+    ) -> str:
         """
         Create email body text.
 
         Args:
             date_str: Date string
             anomaly_summary: Anomaly summary text
+            severity: Severity level ('critical', 'high', 'normal')
+            max_ratio: Maximum threshold ratio exceeded
 
         Returns:
             Email body text
         """
-        body = f"""Box Download Anomaly Alert
+        if severity == 'critical':
+            body = f"""🚨🚨🚨 緊急セキュリティアラート 🚨🚨🚨
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  大量ダウンロードを検知しました  ⚠️
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【検知日時】{date_str}
+【深刻度】🔴 緊急（閾値の {max_ratio:.0f} 倍超過）
+
+【検知内容】
+{anomaly_summary}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔔 緊急対応が必要です 🔔
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【推奨アクション】
+1. 該当ユーザーのアカウントを一時停止してください
+2. ダウンロードされたファイルの内容を確認してください
+3. 本人に連絡して意図を確認してください
+4. 情報漏洩の可能性がある場合は上長に報告してください
+
+添付のCSVファイルに詳細情報が記載されています。
+直ちに確認をお願いします。
+
+---
+⚡ Box Download Report 自動アラート
+"""
+        elif severity == 'high':
+            body = f"""⚠️ セキュリティ警告 ⚠️
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+異常なダウンロード活動を検知しました
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【検知日時】{date_str}
+【深刻度】🟠 警告（閾値の {max_ratio:.0f} 倍超過）
+
+【検知内容】
+{anomaly_summary}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【推奨アクション】
+1. 該当ユーザーの活動内容を確認してください
+2. 業務上必要なダウンロードかどうか確認してください
+3. 不審な点があれば上長に報告してください
+
+添付のCSVファイルで詳細をご確認ください。
+
+---
+Box Download Report 自動アラート
+"""
+        else:
+            body = f"""Box Download Anomaly Alert
 
 Date: {date_str}
 

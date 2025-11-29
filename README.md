@@ -9,21 +9,29 @@ Box ダウンロード履歴集計バッチプログラム
 ## 主な機能
 
 - Box ダウンロードログ収集（JWT認証）
+- User Activity CSV 自動ダウンロード・インポート
 - SQLite データベースへの蓄積
 - 監査用詳細ログの出力
-- 異常値検知
-  - ダウンロード数閾値
-  - ユニークファイル数閾値
+- **異常値検知（4種類）**
+  - ダウンロード数閾値超過
+  - ユニークファイル数閾値超過
   - 勤務時間外アクセス検知
   - スパイク検知（短時間大量ダウンロード）
-- 異常ユーザー詳細 CSV 出力
-- メール通知（CSV 添付）
+- 異常ユーザー詳細 CSV 出力（複合アラートタイプ対応）
+- **重大度ベースのメール通知**
+  - Critical（緊急）: 閾値の10倍以上超過 → 緊急アラートメール
+  - High（警告）: 閾値の5〜10倍超過 → 警告メール
+  - Normal（通常）: 閾値の5倍未満 → 通常通知
+- 除外ユーザー設定（システムアカウント等を検知対象外に）
 - 月次サマリー生成
 - **HTMLダッシュボード生成**
   - ダウンロード分析ダッシュボード
   - プレビュー分析ダッシュボード
   - Chart.js によるインタラクティブなグラフ表示
   - 完全オフライン動作
+- **クラウドデプロイ**
+  - Netlify 自動デプロイ
+  - Cloudflare Pages 自動デプロイ
 
 ## 必要環境
 
@@ -91,6 +99,19 @@ copy .env.sample .env
 - `ALERT_OFFHOUR_DOWNLOAD_THRESHOLD`: ユーザーあたり1日の勤務時間外ダウンロード閾値（デフォルト: 50）
 - `ALERT_SPIKE_WINDOW_MINUTES`: スパイク検知時間窓（分、デフォルト: 60）
 - `ALERT_SPIKE_DOWNLOAD_THRESHOLD`: ユーザーあたりスパイク検知ダウンロード数閾値（デフォルト: 50）
+- `ALERT_EXCLUDE_USERS`: 除外ユーザー（カンマ区切り、システムアカウント等を検知対象外に）
+
+#### 重大度レベル
+
+閾値超過率に応じてメールの緊急度が変わります：
+
+| レベル | 超過率 | メール件名例 |
+|--------|--------|-------------|
+| Critical | 10倍以上 | 🚨🚨🚨 【緊急】大量ダウンロード検知（閾値の17倍超過）🚨🚨🚨 |
+| High | 5〜10倍 | ⚠️ 【警告】異常ダウンロード検知（閾値の7倍超過）|
+| Normal | 5倍未満 | Box Download Anomalies Detected |
+
+Critical レベルでは、メール本文に緊急対応アクション（アカウント停止、情報漏洩確認等）が記載されます。
 
 ### メール設定
 
@@ -227,10 +248,11 @@ pyinstaller --onefile --name box_daily_update box_daily_update.py
 
 このEXEは以下の処理を自動的に順次実行します:
 1. BoxからUser Activity CSVを自動ダウンロード・インポート
-2. 異常検知処理（閾値超過ユーザーの検出）
-3. **異常検出時はメール通知（CSV添付）**
-4. 期間フィルター付きダッシュボード生成
-5. Netlifyへの自動デプロイ（ダッシュボード公開）
+2. 期間フィルター付きダッシュボード生成
+3. 異常検知処理（閾値超過ユーザーの検出）
+4. **異常検出時はメール通知（CSV添付、重大度に応じた緊急度）**
+5. Netlifyへの自動デプロイ（平日のみ、土日はスキップ）
+6. Cloudflare Pagesへの自動デプロイ
 
 #### タスクスケジューラの設定
 
@@ -244,11 +266,27 @@ pyinstaller --onefile --name box_daily_update box_daily_update.py
 
 **実行内容**:
 - BoxからUser Activity CSVを自動ダウンロード → SQLiteデータベース保存
-- 異常検知処理 → 閾値超過時はメール通知
 - 期間フィルター付きダッシュボード生成・更新
-- Netlifyへ自動デプロイ
+- 異常検知処理 → 閾値超過時は重大度に応じたメール通知
+- Netlify / Cloudflare Pagesへ自動デプロイ
 
 これにより、毎日最新のデータでダッシュボードが自動更新され、異常時はメールでアラートが届きます。
+
+### デプロイ設定
+
+#### Netlify
+
+- `NETLIFY_SITE_ID`: NetlifyサイトID
+- `SKIP_NETLIFY_DEPLOY`: 1でデプロイをスキップ
+
+#### Cloudflare Pages
+
+- `CLOUDFLARE_PAGES_PROJECT`: Cloudflare Pagesプロジェクト名
+- `SKIP_CLOUDFLARE_DEPLOY`: 1でデプロイをスキップ
+
+**ダッシュボードURL**:
+- Netlify: https://box-dashboard-report.netlify.app/
+- Cloudflare: https://box-dashboard-report.pages.dev/
 
 ## 出力ファイル
 
@@ -265,6 +303,20 @@ pyinstaller --onefile --name box_daily_update box_daily_update.py
 
 - `anomaly_details_YYYYMMDD_confirmed.csv`: 異常候補ユーザーの詳細（前日確定値）
 - `anomaly_details_YYYYMMDD_tentative.csv`: 異常候補ユーザーの詳細（当日速報値）
+- `anomaly_details_YYYYMMDD_daily.csv`: アラート検知時の詳細（メール添付用）
+
+#### 異常タイプ（anomaly_types列）
+
+CSVの`anomaly_types`列には検知されたアラートタイプが記録されます：
+
+| タイプ | 説明 |
+|--------|------|
+| `download_count` | ダウンロード数が閾値超過 |
+| `unique_files` | ユニークファイル数が閾値超過 |
+| `offhour` | 勤務時間外ダウンロードが閾値超過 |
+| `spike` | 短時間に大量ダウンロード |
+
+複合アラート時は `download_count+unique_files+spike` のように `+` で連結されます。
 
 ### 月次レポート
 
