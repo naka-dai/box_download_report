@@ -152,18 +152,19 @@ def collect_all_data(cursor, admin_params, placeholders, period_clause, period_k
 
     data['hourly_integrated'] = hourly_data_with_users
 
-    # Top users
+    # Top users - group by unified_id to merge users with same user_id or same login
     cursor.execute(f'''
         SELECT
-            user_name,
-            user_login,
-            SUM(CASE WHEN event_type = "DOWNLOAD" THEN 1 ELSE 0 END) as download_count,
-            SUM(CASE WHEN event_type = "PREVIEW" THEN 1 ELSE 0 END) as preview_count,
+            d.user_name,
+            um.unified_id,
+            SUM(CASE WHEN d.event_type = "DOWNLOAD" THEN 1 ELSE 0 END) as download_count,
+            SUM(CASE WHEN d.event_type = "PREVIEW" THEN 1 ELSE 0 END) as preview_count,
             COUNT(*) as total_count,
-            COUNT(DISTINCT file_id) as unique_files
-        FROM downloads
-        WHERE user_login NOT IN ({placeholders}) {period_clause}
-        GROUP BY user_login
+            COUNT(DISTINCT d.file_id) as unique_files
+        FROM downloads d
+        JOIN temp_user_mapping um ON d.user_login = um.user_login
+        WHERE d.user_login NOT IN ({placeholders}) {period_clause}
+        GROUP BY um.unified_id
         ORDER BY total_count DESC
     ''', admin_params)
     data['top_users_integrated'] = cursor.fetchall()
@@ -300,16 +301,17 @@ def collect_all_data(cursor, admin_params, placeholders, period_clause, period_k
 
     data['hourly_download'] = hourly_dl_with_users
 
-    # Top users
+    # Top users - group by unified_id
     cursor.execute(f'''
         SELECT
-            user_name,
-            user_login,
+            d.user_name,
+            um.unified_id,
             COUNT(*) as download_count,
-            COUNT(DISTINCT file_id) as unique_files
-        FROM downloads
-        WHERE event_type = "DOWNLOAD" AND user_login NOT IN ({placeholders}) {period_clause}
-        GROUP BY user_login
+            COUNT(DISTINCT d.file_id) as unique_files
+        FROM downloads d
+        JOIN temp_user_mapping um ON d.user_login = um.user_login
+        WHERE d.event_type = "DOWNLOAD" AND d.user_login NOT IN ({placeholders}) {period_clause}
+        GROUP BY um.unified_id
         ORDER BY download_count DESC
     ''', admin_params)
     data['top_users_download'] = cursor.fetchall()
@@ -445,16 +447,17 @@ def collect_all_data(cursor, admin_params, placeholders, period_clause, period_k
 
     data['hourly_preview'] = hourly_pv_with_users
 
-    # Top users
+    # Top users - group by unified_id
     cursor.execute(f'''
         SELECT
-            user_name,
-            user_login,
+            d.user_name,
+            um.unified_id,
             COUNT(*) as preview_count,
-            COUNT(DISTINCT file_id) as unique_files
-        FROM downloads
-        WHERE event_type = "PREVIEW" AND user_login NOT IN ({placeholders}) {period_clause}
-        GROUP BY user_login
+            COUNT(DISTINCT d.file_id) as unique_files
+        FROM downloads d
+        JOIN temp_user_mapping um ON d.user_login = um.user_login
+        WHERE d.event_type = "PREVIEW" AND d.user_login NOT IN ({placeholders}) {period_clause}
+        GROUP BY um.unified_id
         ORDER BY preview_count DESC
     ''', admin_params)
     data['top_users_preview'] = cursor.fetchall()
@@ -502,6 +505,185 @@ def collect_all_data(cursor, admin_params, placeholders, period_clause, period_k
         top_files_preview.append((file_name, folder, count, unique_users_count, user_names))
 
     data['top_files_preview'] = top_files_preview
+
+    # === USER-SPECIFIC DATA FOR FULL FILTERING ===
+    # Collect per-user statistics and chart data
+    # Use unified_id to consolidate users with same user_id or same login
+    user_data = {}
+
+    # Get all users - group by unified_id
+    cursor.execute(f'''
+        SELECT
+            um.unified_id,
+            d.user_name,
+            SUM(CASE WHEN d.event_type = "DOWNLOAD" THEN 1 ELSE 0 END) as dl_count,
+            SUM(CASE WHEN d.event_type = "PREVIEW" THEN 1 ELSE 0 END) as pv_count,
+            COUNT(DISTINCT d.file_id) as unique_files
+        FROM downloads d
+        JOIN temp_user_mapping um ON d.user_login = um.user_login
+        WHERE d.user_login NOT IN ({placeholders}) {period_clause}
+        GROUP BY um.unified_id
+    ''', admin_params)
+
+    for unified_id, user_name, dl_count, pv_count, unique_files in cursor.fetchall():
+        user_data[unified_id] = {
+            'name': user_name,
+            'stats': {
+                'downloads': dl_count,
+                'previews': pv_count,
+                'total': dl_count + pv_count,
+                'files': unique_files
+            },
+            'monthly': {'downloads': {}, 'previews': {}},
+            'daily': {'downloads': {}, 'previews': {}},
+            'hourly': {'downloads': {}, 'previews': {}}
+        }
+
+    # Collect monthly data per user (group by unified_id)
+    cursor.execute(f'''
+        SELECT
+            um.unified_id,
+            strftime('%Y-%m', d.download_at_jst) as month,
+            SUM(CASE WHEN d.event_type = "DOWNLOAD" THEN 1 ELSE 0 END) as dl_count,
+            SUM(CASE WHEN d.event_type = "PREVIEW" THEN 1 ELSE 0 END) as pv_count
+        FROM downloads d
+        JOIN temp_user_mapping um ON d.user_login = um.user_login
+        WHERE d.user_login NOT IN ({placeholders}) {period_clause}
+        GROUP BY um.unified_id, month
+        ORDER BY month
+    ''', admin_params)
+
+    for unified_id, month, dl_count, pv_count in cursor.fetchall():
+        if unified_id in user_data and month:
+            if month in user_data[unified_id]['monthly']['downloads']:
+                user_data[unified_id]['monthly']['downloads'][month] += dl_count
+                user_data[unified_id]['monthly']['previews'][month] += pv_count
+            else:
+                user_data[unified_id]['monthly']['downloads'][month] = dl_count
+                user_data[unified_id]['monthly']['previews'][month] = pv_count
+
+    # Collect daily data per user - group by unified_id
+    cursor.execute(f'''
+        SELECT
+            um.unified_id,
+            DATE(d.download_at_jst) as date,
+            SUM(CASE WHEN d.event_type = "DOWNLOAD" THEN 1 ELSE 0 END) as dl_count,
+            SUM(CASE WHEN d.event_type = "PREVIEW" THEN 1 ELSE 0 END) as pv_count
+        FROM downloads d
+        JOIN temp_user_mapping um ON d.user_login = um.user_login
+        WHERE d.user_login NOT IN ({placeholders}) {period_clause}
+        GROUP BY um.unified_id, date
+        ORDER BY date DESC
+    ''', admin_params)
+
+    # Process daily data - store as dict with date keys
+    for unified_id, date, dl_count, pv_count in cursor.fetchall():
+        if unified_id in user_data and date:
+            if date in user_data[unified_id]['daily']['downloads']:
+                user_data[unified_id]['daily']['downloads'][date] += dl_count
+                user_data[unified_id]['daily']['previews'][date] += pv_count
+            else:
+                user_data[unified_id]['daily']['downloads'][date] = dl_count
+                user_data[unified_id]['daily']['previews'][date] = pv_count
+
+    # Collect hourly data per user - group by unified_id
+    cursor.execute(f'''
+        SELECT
+            um.unified_id,
+            CAST(strftime('%H', d.download_at_jst) AS INTEGER) as hour,
+            SUM(CASE WHEN d.event_type = "DOWNLOAD" THEN 1 ELSE 0 END) as dl_count,
+            SUM(CASE WHEN d.event_type = "PREVIEW" THEN 1 ELSE 0 END) as pv_count
+        FROM downloads d
+        JOIN temp_user_mapping um ON d.user_login = um.user_login
+        WHERE d.user_login NOT IN ({placeholders}) {period_clause}
+        GROUP BY um.unified_id, hour
+    ''', admin_params)
+
+    for unified_id, hour, dl_count, pv_count in cursor.fetchall():
+        if unified_id in user_data and hour is not None:
+            # Use zero-padded string keys to match JavaScript
+            hour_str = str(hour).zfill(2)
+            if hour_str in user_data[unified_id]['hourly']['downloads']:
+                user_data[unified_id]['hourly']['downloads'][hour_str] += dl_count
+                user_data[unified_id]['hourly']['previews'][hour_str] += pv_count
+            else:
+                user_data[unified_id]['hourly']['downloads'][hour_str] = dl_count
+                user_data[unified_id]['hourly']['previews'][hour_str] = pv_count
+
+    data['user_data'] = user_data
+
+    # === ADD USER IDs TO TOP FILES FOR FILTERING ===
+    # Re-collect top files with unified_ids for filtering
+    def get_file_user_ids(file_id, event_type_filter=None):
+        """Get list of unified_ids who accessed this file."""
+        if event_type_filter:
+            query = f'''
+                SELECT DISTINCT um.unified_id
+                FROM downloads d
+                JOIN temp_user_mapping um ON d.user_login = um.user_login
+                WHERE d.file_id = ?
+                  AND d.event_type = ?
+                  AND d.user_login NOT IN ({placeholders})
+                  {period_clause if period_clause else ''}
+            '''
+            cursor.execute(query, (file_id, event_type_filter) + admin_params)
+        else:
+            query = f'''
+                SELECT DISTINCT um.unified_id
+                FROM downloads d
+                JOIN temp_user_mapping um ON d.user_login = um.user_login
+                WHERE d.file_id = ?
+                  AND d.user_login NOT IN ({placeholders})
+                  {period_clause if period_clause else ''}
+            '''
+            cursor.execute(query, (file_id,) + admin_params)
+        return [row[0] for row in cursor.fetchall()]
+
+    # Add user_ids to integrated files
+    top_files_integrated_with_ids = []
+    for item in data['top_files_integrated']:
+        file_name, folder, dl_count, pv_count, total, users_count, user_names = item
+        # Get file_id to fetch user_ids
+        cursor.execute(f'''
+            SELECT file_id FROM downloads
+            WHERE file_name = ? AND user_login NOT IN ({placeholders}) {period_clause}
+            LIMIT 1
+        ''', (file_name,) + admin_params)
+        row = cursor.fetchone()
+        file_id = row[0] if row else None
+        user_ids = get_file_user_ids(file_id) if file_id else []
+        top_files_integrated_with_ids.append((file_name, folder, dl_count, pv_count, total, users_count, user_names, user_ids))
+    data['top_files_integrated'] = top_files_integrated_with_ids
+
+    # Add user_ids to download files
+    top_files_download_with_ids = []
+    for item in data['top_files_download']:
+        file_name, folder, count, users_count, user_names = item
+        cursor.execute(f'''
+            SELECT file_id FROM downloads
+            WHERE file_name = ? AND event_type = "DOWNLOAD" AND user_login NOT IN ({placeholders}) {period_clause}
+            LIMIT 1
+        ''', (file_name,) + admin_params)
+        row = cursor.fetchone()
+        file_id = row[0] if row else None
+        user_ids = get_file_user_ids(file_id, "DOWNLOAD") if file_id else []
+        top_files_download_with_ids.append((file_name, folder, count, users_count, user_names, user_ids))
+    data['top_files_download'] = top_files_download_with_ids
+
+    # Add user_ids to preview files
+    top_files_preview_with_ids = []
+    for item in data['top_files_preview']:
+        file_name, folder, count, users_count, user_names = item
+        cursor.execute(f'''
+            SELECT file_id FROM downloads
+            WHERE file_name = ? AND event_type = "PREVIEW" AND user_login NOT IN ({placeholders}) {period_clause}
+            LIMIT 1
+        ''', (file_name,) + admin_params)
+        row = cursor.fetchone()
+        file_id = row[0] if row else None
+        user_ids = get_file_user_ids(file_id, "PREVIEW") if file_id else []
+        top_files_preview_with_ids.append((file_name, folder, count, users_count, user_names, user_ids))
+    data['top_files_preview'] = top_files_preview_with_ids
 
     return data
 
@@ -729,31 +911,31 @@ def generate_period_content(period_id, period_name, stats):
                 <div class="stats-grid">
                     <div class="stat-card download">
                         <h3>総ダウンロード数</h3>
-                        <div class="value">{total_downloads:,}</div>
+                        <div class="value" id="{period_id}-stat-downloads">{total_downloads:,}</div>
                     </div>
                     <div class="stat-card preview">
                         <h3>総プレビュー数</h3>
-                        <div class="value">{total_previews:,}</div>
+                        <div class="value" id="{period_id}-stat-previews">{total_previews:,}</div>
                     </div>
                     <div class="stat-card">
                         <h3>総アクセス数</h3>
-                        <div class="value">{total_access:,}</div>
+                        <div class="value" id="{period_id}-stat-total">{total_access:,}</div>
                     </div>
                     <div class="stat-card download">
-                        <h3>DLユニーク数</h3>
-                        <div class="value">{unique_users_download}</div>
+                        <h3>DLユニーク人数</h3>
+                        <div class="value" id="{period_id}-stat-dl-users">{unique_users_download}</div>
                     </div>
                     <div class="stat-card preview">
-                        <h3>PVユニーク数</h3>
-                        <div class="value">{unique_users_preview}</div>
+                        <h3>PVユニーク人数</h3>
+                        <div class="value" id="{period_id}-stat-pv-users">{unique_users_preview}</div>
                     </div>
                     <div class="stat-card">
                         <h3>ファイル数</h3>
-                        <div class="value">{unique_files:,}</div>
+                        <div class="value" id="{period_id}-stat-files">{unique_files:,}</div>
                     </div>
                     <div class="stat-card">
                         <h3>DL比率 / PV比率</h3>
-                        <div class="value" style="font-size: 1.3em;">{download_ratio:.0f}% / {preview_ratio:.0f}%</div>
+                        <div class="value" id="{period_id}-stat-ratio" style="font-size: 1.3em;">{download_ratio:.0f}% / {preview_ratio:.0f}%</div>
                     </div>
                 </div>
 
@@ -803,11 +985,11 @@ def generate_period_content(period_id, period_name, stats):
                         <tbody id="topUsersIntegratedTable_{period_id}">
 '''
 
-    for i, (name, _email, dl_count, pv_count, total, files) in enumerate(stats['top_users_integrated'], 1):
+    for i, (name, user_id, dl_count, pv_count, total, files) in enumerate(stats['top_users_integrated'], 1):
         duplication_rate = ((total - files) / total * 100) if total > 0 else 0
         show_class = 'show' if i <= 10 else ''
 
-        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}">
+        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}" data-user-id="{user_id}">
                                 <td><span class="rank">{i}</span></td>
                                 <td>{name}</td>
                                 <td style="text-align: right;"><span class="badge download">{dl_count:,}</span></td>
@@ -839,9 +1021,10 @@ def generate_period_content(period_id, period_name, stats):
                         <tbody>
 '''
 
-    for i, (file_name, folder, dl_count, pv_count, total, users, user_names) in enumerate(stats['top_files_integrated'], 1):
+    for i, (file_name, folder, dl_count, pv_count, total, users, user_names, user_ids) in enumerate(stats['top_files_integrated'], 1):
         users_json = json.dumps(user_names, ensure_ascii=False)
-        html += f'''                            <tr>
+        user_ids_json = json.dumps(user_ids, ensure_ascii=False)
+        html += f'''                            <tr class="file-row" data-user-ids='{user_ids_json}'>
                                 <td><span class="rank">{i}</span></td>
                                 <td>{file_name}</td>
                                 <td style="font-size: 0.9em; color: #666;">{folder}</td>
@@ -864,15 +1047,15 @@ def generate_period_content(period_id, period_name, stats):
                 <div class="stats-grid">
                     <div class="stat-card download">
                         <h3>総ダウンロード数</h3>
-                        <div class="value">''' + f"{total_downloads:,}" + '''</div>
+                        <div class="value" id="''' + period_id + '''-dl-stat-downloads">''' + f"{total_downloads:,}" + '''</div>
                     </div>
                     <div class="stat-card download">
                         <h3>ユニークユーザー</h3>
-                        <div class="value">''' + f"{unique_users_download}" + '''</div>
+                        <div class="value" id="''' + period_id + '''-dl-stat-users">''' + f"{unique_users_download}" + '''</div>
                     </div>
                     <div class="stat-card">
                         <h3>ファイル数</h3>
-                        <div class="value">''' + f"{unique_files:,}" + '''</div>
+                        <div class="value" id="''' + period_id + '''-dl-stat-files">''' + f"{unique_files:,}" + '''</div>
                     </div>
                 </div>
 
@@ -920,11 +1103,11 @@ def generate_period_content(period_id, period_name, stats):
                         <tbody id="topUsersDownloadTable_''' + period_id + '''">
 '''
 
-    for i, (name, _email, count, files) in enumerate(stats['top_users_download'], 1):
+    for i, (name, user_id, count, files) in enumerate(stats['top_users_download'], 1):
         duplication_rate = ((count - files) / count * 100) if count > 0 else 0
         show_class = 'show' if i <= 10 else ''
 
-        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}">
+        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}" data-user-id="{user_id}">
                                 <td><span class="rank">{i}</span></td>
                                 <td>{name}</td>
                                 <td style="text-align: right; font-weight: bold;">{count:,}</td>
@@ -952,9 +1135,10 @@ def generate_period_content(period_id, period_name, stats):
                         <tbody>
 '''
 
-    for i, (file_name, folder, count, users, user_names) in enumerate(stats['top_files_download'], 1):
+    for i, (file_name, folder, count, users, user_names, user_ids) in enumerate(stats['top_files_download'], 1):
         users_json = json.dumps(user_names, ensure_ascii=False)
-        html += f'''                            <tr>
+        user_ids_json = json.dumps(user_ids, ensure_ascii=False)
+        html += f'''                            <tr class="file-row" data-user-ids='{user_ids_json}'>
                                 <td><span class="rank">{i}</span></td>
                                 <td>{file_name}</td>
                                 <td style="font-size: 0.9em; color: #666;">{folder}</td>
@@ -975,15 +1159,15 @@ def generate_period_content(period_id, period_name, stats):
                 <div class="stats-grid">
                     <div class="stat-card preview">
                         <h3>総プレビュー数</h3>
-                        <div class="value">''' + f"{total_previews:,}" + '''</div>
+                        <div class="value" id="''' + period_id + '''-pv-stat-previews">''' + f"{total_previews:,}" + '''</div>
                     </div>
                     <div class="stat-card preview">
                         <h3>ユニークユーザー</h3>
-                        <div class="value">''' + f"{unique_users_preview}" + '''</div>
+                        <div class="value" id="''' + period_id + '''-pv-stat-users">''' + f"{unique_users_preview}" + '''</div>
                     </div>
                     <div class="stat-card">
                         <h3>プレビューファイル数</h3>
-                        <div class="value">''' + f"{unique_files:,}" + '''</div>
+                        <div class="value" id="''' + period_id + '''-pv-stat-files">''' + f"{unique_files:,}" + '''</div>
                     </div>
                 </div>
 
@@ -1031,11 +1215,11 @@ def generate_period_content(period_id, period_name, stats):
                         <tbody id="topUsersPreviewTable_''' + period_id + '''">
 '''
 
-    for i, (name, _email, count, files) in enumerate(stats['top_users_preview'], 1):
+    for i, (name, user_id, count, files) in enumerate(stats['top_users_preview'], 1):
         duplication_rate = ((count - files) / count * 100) if count > 0 else 0
         show_class = 'show' if i <= 10 else ''
 
-        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}">
+        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}" data-user-id="{user_id}">
                                 <td><span class="rank">{i}</span></td>
                                 <td>{name}</td>
                                 <td style="text-align: right; font-weight: bold;">{count:,}</td>
@@ -1063,9 +1247,10 @@ def generate_period_content(period_id, period_name, stats):
                         <tbody>
 '''
 
-    for i, (file_name, folder, count, users, user_names) in enumerate(stats['top_files_preview'], 1):
+    for i, (file_name, folder, count, users, user_names, user_ids) in enumerate(stats['top_files_preview'], 1):
         users_json = json.dumps(user_names, ensure_ascii=False)
-        html += f'''                            <tr>
+        user_ids_json = json.dumps(user_ids, ensure_ascii=False)
+        html += f'''                            <tr class="file-row" data-user-ids='{user_ids_json}'>
                                 <td><span class="rank">{i}</span></td>
                                 <td>{file_name}</td>
                                 <td style="font-size: 0.9em; color: #666;">{folder}</td>
@@ -1088,7 +1273,7 @@ def generate_period_content(period_id, period_name, stats):
         // Charts for {period_name} - Integrated
         const monthlyIntegratedTooltips_{period_id} = {json.dumps(monthly_integrated_tooltips)};
 
-        new Chart(document.getElementById('{period_id}-monthlyIntegratedChart').getContext('2d'), {{
+        chartInstances['{period_id}-monthlyIntegrated'] = new Chart(document.getElementById('{period_id}-monthlyIntegratedChart').getContext('2d'), {{
             type: 'bar',
             data: {{
                 labels: {json.dumps(monthly_integrated_labels)},
@@ -1160,7 +1345,7 @@ def generate_period_content(period_id, period_name, stats):
 
         const dailyIntegratedTooltips_{period_id} = {json.dumps(daily_integrated_tooltips)};
 
-        new Chart(document.getElementById('{period_id}-dailyIntegratedChart').getContext('2d'), {{
+        chartInstances['{period_id}-dailyIntegrated'] = new Chart(document.getElementById('{period_id}-dailyIntegratedChart').getContext('2d'), {{
             type: 'line',
             data: {{
                 labels: {json.dumps(daily_integrated_labels)},
@@ -1239,7 +1424,7 @@ def generate_period_content(period_id, period_name, stats):
 
         const hourlyIntegratedTooltips_{period_id} = {json.dumps(hourly_integrated_tooltips)};
 
-        new Chart(document.getElementById('{period_id}-hourlyIntegratedChart').getContext('2d'), {{
+        chartInstances['{period_id}-hourlyIntegrated'] = new Chart(document.getElementById('{period_id}-hourlyIntegratedChart').getContext('2d'), {{
             type: 'bar',
             data: {{
                 labels: {json.dumps(hourly_integrated_labels)},
@@ -1312,7 +1497,7 @@ def generate_period_content(period_id, period_name, stats):
         // Charts for {period_name} - Download
         const monthlyDownloadTooltips_{period_id} = {json.dumps(monthly_download_tooltips)};
 
-        new Chart(document.getElementById('{period_id}-monthlyDownloadChart').getContext('2d'), {{
+        chartInstances['{period_id}-monthlyDownload'] = new Chart(document.getElementById('{period_id}-monthlyDownloadChart').getContext('2d'), {{
             type: 'bar',
             data: {{
                 labels: {json.dumps(monthly_download_labels)},
@@ -1373,7 +1558,7 @@ def generate_period_content(period_id, period_name, stats):
 
         const dailyDownloadTooltips_{period_id} = {json.dumps(daily_download_tooltips)};
 
-        new Chart(document.getElementById('{period_id}-dailyDownloadChart').getContext('2d'), {{
+        chartInstances['{period_id}-dailyDownload'] = new Chart(document.getElementById('{period_id}-dailyDownloadChart').getContext('2d'), {{
             type: 'line',
             data: {{
                 labels: {json.dumps(daily_download_labels)},
@@ -1440,7 +1625,7 @@ def generate_period_content(period_id, period_name, stats):
 
         const hourlyDownloadTooltips_{period_id} = {json.dumps(hourly_download_tooltips)};
 
-        new Chart(document.getElementById('{period_id}-hourlyDownloadChart').getContext('2d'), {{
+        chartInstances['{period_id}-hourlyDownload'] = new Chart(document.getElementById('{period_id}-hourlyDownloadChart').getContext('2d'), {{
             type: 'bar',
             data: {{
                 labels: {json.dumps(hourly_download_labels)},
@@ -1502,7 +1687,7 @@ def generate_period_content(period_id, period_name, stats):
         // Charts for {period_name} - Preview
         const monthlyPreviewTooltips_{period_id} = {json.dumps(monthly_preview_tooltips)};
 
-        new Chart(document.getElementById('{period_id}-monthlyPreviewChart').getContext('2d'), {{
+        chartInstances['{period_id}-monthlyPreview'] = new Chart(document.getElementById('{period_id}-monthlyPreviewChart').getContext('2d'), {{
             type: 'bar',
             data: {{
                 labels: {json.dumps(monthly_preview_labels)},
@@ -1563,7 +1748,7 @@ def generate_period_content(period_id, period_name, stats):
 
         const dailyPreviewTooltips_{period_id} = {json.dumps(daily_preview_tooltips)};
 
-        new Chart(document.getElementById('{period_id}-dailyPreviewChart').getContext('2d'), {{
+        chartInstances['{period_id}-dailyPreview'] = new Chart(document.getElementById('{period_id}-dailyPreviewChart').getContext('2d'), {{
             type: 'line',
             data: {{
                 labels: {json.dumps(daily_preview_labels)},
@@ -1630,7 +1815,7 @@ def generate_period_content(period_id, period_name, stats):
 
         const hourlyPreviewTooltips_{period_id} = {json.dumps(hourly_preview_tooltips)};
 
-        new Chart(document.getElementById('{period_id}-hourlyPreviewChart').getContext('2d'), {{
+        chartInstances['{period_id}-hourlyPreview'] = new Chart(document.getElementById('{period_id}-hourlyPreviewChart').getContext('2d'), {{
             type: 'bar',
             data: {{
                 labels: {json.dumps(hourly_preview_labels)},
@@ -1699,10 +1884,22 @@ def generate_period_content(period_id, period_name, stats):
             const rows = document.querySelectorAll('#topUsersIntegratedTable_{period_id} .user-row');
             rows.forEach(row => {{
                 const rank = parseInt(row.getAttribute('data-rank'));
-                if (rank <= limit) {{
-                    row.classList.add('show');
+                const rowUserId = row.getAttribute('data-user-id') || '';
+                // Check if user filter is active
+                if (currentFilterUser) {{
+                    // When filter is active, show only matching user
+                    if (rowUserId === currentFilterUser) {{
+                        row.classList.add('show', 'user-highlight');
+                    }} else {{
+                        row.classList.remove('show', 'user-highlight');
+                    }}
                 }} else {{
-                    row.classList.remove('show');
+                    // No filter - show by rank limit
+                    if (rank <= limit) {{
+                        row.classList.add('show');
+                    }} else {{
+                        row.classList.remove('show');
+                    }}
                 }}
             }});
         }}
@@ -1716,10 +1913,22 @@ def generate_period_content(period_id, period_name, stats):
             const rows = document.querySelectorAll('#topUsersDownloadTable_{period_id} .user-row');
             rows.forEach(row => {{
                 const rank = parseInt(row.getAttribute('data-rank'));
-                if (rank <= limit) {{
-                    row.classList.add('show');
+                const rowUserId = row.getAttribute('data-user-id') || '';
+                // Check if user filter is active
+                if (currentFilterUser) {{
+                    // When filter is active, show only matching user
+                    if (rowUserId === currentFilterUser) {{
+                        row.classList.add('show', 'user-highlight');
+                    }} else {{
+                        row.classList.remove('show', 'user-highlight');
+                    }}
                 }} else {{
-                    row.classList.remove('show');
+                    // No filter - show by rank limit
+                    if (rank <= limit) {{
+                        row.classList.add('show');
+                    }} else {{
+                        row.classList.remove('show');
+                    }}
                 }}
             }});
         }}
@@ -1733,10 +1942,22 @@ def generate_period_content(period_id, period_name, stats):
             const rows = document.querySelectorAll('#topUsersPreviewTable_{period_id} .user-row');
             rows.forEach(row => {{
                 const rank = parseInt(row.getAttribute('data-rank'));
-                if (rank <= limit) {{
-                    row.classList.add('show');
+                const rowUserId = row.getAttribute('data-user-id') || '';
+                // Check if user filter is active
+                if (currentFilterUser) {{
+                    // When filter is active, show only matching user
+                    if (rowUserId === currentFilterUser) {{
+                        row.classList.add('show', 'user-highlight');
+                    }} else {{
+                        row.classList.remove('show', 'user-highlight');
+                    }}
                 }} else {{
-                    row.classList.remove('show');
+                    // No filter - show by rank limit
+                    if (rank <= limit) {{
+                        row.classList.add('show');
+                    }} else {{
+                        row.classList.remove('show');
+                    }}
                 }}
             }});
         }}
@@ -1758,6 +1979,9 @@ def generate_dashboard():
     import os
     db_path = os.getenv("DB_PATH", r"data\box_audit.db")
     print(f"[DEBUG] Dashboard using DB: {db_path}")
+
+    # ユーザーリストを収集（フィルタリング用）
+    all_users_list = []
 
     try:
         conn = sqlite3.connect(db_path)
@@ -1792,12 +2016,50 @@ def generate_dashboard():
     placeholders = ','.join(['?' for _ in admin_emails])
     admin_params = tuple(admin_emails)
 
+    # Create temporary table for unified user_id mapping
+    # This maps each user_login to its best user_id (from records where user_id is not NULL)
+    # Then unifies users who share the same user_id even with different logins
+    cursor.execute('DROP TABLE IF EXISTS temp_user_mapping')
+    cursor.execute('''
+        CREATE TEMPORARY TABLE temp_user_mapping AS
+        WITH login_to_id AS (
+            SELECT user_login, MAX(user_id) as user_id
+            FROM downloads
+            WHERE user_id IS NOT NULL
+            GROUP BY user_login
+        ),
+        id_to_primary_login AS (
+            SELECT user_id, MIN(user_login) as primary_login
+            FROM login_to_id
+            GROUP BY user_id
+        )
+        SELECT
+            d.user_login,
+            COALESCE(ip.primary_login, lti.user_id, d.user_login) as unified_id
+        FROM (SELECT DISTINCT user_login FROM downloads) d
+        LEFT JOIN login_to_id lti ON d.user_login = lti.user_login
+        LEFT JOIN id_to_primary_login ip ON lti.user_id = ip.user_id
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_temp_user_mapping ON temp_user_mapping(user_login)')
+
     # Get overall date range
     cursor.execute(f'SELECT MIN(download_at_jst), MAX(download_at_jst) FROM downloads WHERE user_login NOT IN ({placeholders})', admin_params)
     min_date, max_date = cursor.fetchone()
 
     print("Box レポート 図面活用状況 生成開始...")
     print(f"データ期間: {min_date} ～ {max_date}")
+
+    # 全ユーザーリストを取得（フィルタリング用）- unified_idでグループ化
+    cursor.execute(f'''
+        SELECT user_name, um.unified_id, COUNT(*) as total_count
+        FROM downloads d
+        JOIN temp_user_mapping um ON d.user_login = um.user_login
+        WHERE d.user_login NOT IN ({placeholders})
+        GROUP BY um.unified_id
+        ORDER BY user_name
+    ''', admin_params)
+    all_users_list = [(name, unified_id, count) for name, unified_id, count in cursor.fetchall()]
+    print(f"ユーザー総数: {len(all_users_list)}人")
 
     # Define periods
     periods = {
@@ -2183,6 +2445,66 @@ def generate_dashboard():
             display: table-row;
         }}
 
+        /* User Filter Section */
+        .user-filter-section {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            flex-wrap: wrap;
+        }}
+
+        .user-filter-section label {{
+            font-weight: 600;
+            color: #667eea;
+        }}
+
+        .user-filter-section select {{
+            padding: 10px 15px;
+            font-size: 1em;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            background: white;
+            color: #333;
+            min-width: 250px;
+            cursor: pointer;
+        }}
+
+        .user-filter-section select:focus {{
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.3);
+        }}
+
+        .clear-filter-btn {{
+            padding: 10px 20px;
+            border: 2px solid #e74c3c;
+            background: white;
+            color: #e74c3c;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }}
+
+        .clear-filter-btn:hover {{
+            background: #e74c3c;
+            color: white;
+        }}
+
+        .filter-status {{
+            font-size: 0.9em;
+            color: #27ae60;
+            font-weight: 600;
+        }}
+
+        .user-highlight {{
+            background: #fff3cd !important;
+        }}
+
         .footer {{
             text-align: center;
             color: white;
@@ -2222,6 +2544,15 @@ def generate_dashboard():
                 <button class="tab-btn preview" onclick="switchTab('preview')">
                     👁️ プレビューのみ集計
                 </button>
+            </div>
+
+            <div class="user-filter-section">
+                <label for="userFilter">👤 ユーザーで絞り込み:</label>
+                <select id="userFilter" onchange="filterByUser(this.value)">
+                    <option value="">全ユーザー ({len(all_users_list)}人)</option>
+                </select>
+                <button class="clear-filter-btn" onclick="clearUserFilter()">✕ クリア</button>
+                <span id="filterStatus" class="filter-status"></span>
             </div>
         </div>
 
@@ -2316,6 +2647,11 @@ def generate_dashboard():
             if (selectedTab) {{
                 selectedTab.classList.add('active');
             }}
+
+            // Re-apply user filter if active
+            if (currentFilterUser) {{
+                filterByUser(currentFilterUser);
+            }}
         }}
 
         // Initialize tooltips
@@ -2339,10 +2675,477 @@ def generate_dashboard():
             }});
         }}
 
+        // User list for filtering (name, user_id)
+        const allUsersList = {json.dumps([(name, str(user_id)) for name, user_id, count in all_users_list], ensure_ascii=False)};
+
+        // User-specific data for full filtering (keyed by period, then by user_id)
+        const userDataByPeriod = {json.dumps({period_id: stats['user_data'] for period_id, (period_name, stats) in period_stats.items()}, ensure_ascii=False)};
+
+        // Original total stats for each period (for resetting)
+        const originalStats = {json.dumps({period_id: {
+            'downloads': stats['total_downloads'],
+            'previews': stats['total_previews'],
+            'total': stats['total_downloads'] + stats['total_previews'],
+            'files': stats['unique_files'],
+            'dl_users': stats['unique_users_download'],
+            'pv_users': stats['unique_users_preview']
+        } for period_id, (period_name, stats) in period_stats.items()})};
+
+        // Original chart data for each period (for resetting)
+        const originalChartData = {json.dumps({period_id: {
+            'monthly': {
+                'labels': [row[0] for row in stats['monthly_integrated']],
+                'downloads': [row[1] for row in stats['monthly_integrated']],
+                'previews': [row[2] for row in stats['monthly_integrated']]
+            },
+            'daily': {
+                'labels': [row[0] for row in stats['daily_integrated']],
+                'downloads': [row[1] for row in stats['daily_integrated']],
+                'previews': [row[2] for row in stats['daily_integrated']]
+            },
+            'hourly': {
+                'labels': list(range(24)),
+                'downloads': [sum(1 for h, dl, pv, _ in stats['hourly_integrated'] if h == hour for hour in range(24)) if False else next((dl for h, dl, pv, _ in stats['hourly_integrated'] if h == hour), 0) for hour in range(24)],
+                'previews': [next((pv for h, dl, pv, _ in stats['hourly_integrated'] if h == hour), 0) for hour in range(24)]
+            }
+        } for period_id, (period_name, stats) in period_stats.items()})};
+
+        // Chart instances storage for updating
+        const chartInstances = {{}};
+
+        // Populate user dropdown
+        function populateUserDropdown() {{
+            const select = document.getElementById('userFilter');
+            allUsersList.forEach(([name, userId]) => {{
+                const option = document.createElement('option');
+                option.value = userId;
+                option.textContent = name;
+                select.appendChild(option);
+            }});
+        }}
+
+        // Current filter state
+        let currentFilterUser = '';
+
+        // Helper function to format number with commas
+        function formatNumber(num) {{
+            return num.toLocaleString();
+        }}
+
+        // Update statistics cards for a period
+        function updateStatsCards(periodId, userId) {{
+            const periods = ['all', 'before', 'after'];
+
+            periods.forEach(pId => {{
+                if (userId && userDataByPeriod[pId] && userDataByPeriod[pId][userId]) {{
+                    const userData = userDataByPeriod[pId][userId];
+                    const stats = userData.stats;
+
+                    // Integrated tab stats
+                    const dlEl = document.getElementById(`${{pId}}-stat-downloads`);
+                    const pvEl = document.getElementById(`${{pId}}-stat-previews`);
+                    const totalEl = document.getElementById(`${{pId}}-stat-total`);
+                    const filesEl = document.getElementById(`${{pId}}-stat-files`);
+                    const dlUsersEl = document.getElementById(`${{pId}}-stat-dl-users`);
+                    const pvUsersEl = document.getElementById(`${{pId}}-stat-pv-users`);
+                    const ratioEl = document.getElementById(`${{pId}}-stat-ratio`);
+
+                    if (dlEl) dlEl.textContent = formatNumber(stats.downloads);
+                    if (pvEl) pvEl.textContent = formatNumber(stats.previews);
+                    if (totalEl) totalEl.textContent = formatNumber(stats.total);
+                    if (filesEl) filesEl.textContent = formatNumber(stats.files);
+                    if (dlUsersEl) dlUsersEl.textContent = '1';
+                    if (pvUsersEl) pvUsersEl.textContent = '1';
+                    if (ratioEl) {{
+                        const dlRatio = stats.total > 0 ? Math.round(stats.downloads / stats.total * 100) : 0;
+                        const pvRatio = stats.total > 0 ? Math.round(stats.previews / stats.total * 100) : 0;
+                        ratioEl.textContent = `${{dlRatio}}% / ${{pvRatio}}%`;
+                    }}
+
+                    // Download tab stats
+                    const dlTabDl = document.getElementById(`${{pId}}-dl-stat-downloads`);
+                    const dlTabUsers = document.getElementById(`${{pId}}-dl-stat-users`);
+                    const dlTabFiles = document.getElementById(`${{pId}}-dl-stat-files`);
+                    if (dlTabDl) dlTabDl.textContent = formatNumber(stats.downloads);
+                    if (dlTabUsers) dlTabUsers.textContent = '1';
+                    if (dlTabFiles) dlTabFiles.textContent = formatNumber(stats.files);
+
+                    // Preview tab stats
+                    const pvTabPv = document.getElementById(`${{pId}}-pv-stat-previews`);
+                    const pvTabUsers = document.getElementById(`${{pId}}-pv-stat-users`);
+                    const pvTabFiles = document.getElementById(`${{pId}}-pv-stat-files`);
+                    if (pvTabPv) pvTabPv.textContent = formatNumber(stats.previews);
+                    if (pvTabUsers) pvTabUsers.textContent = '1';
+                    if (pvTabFiles) pvTabFiles.textContent = formatNumber(stats.files);
+                }} else {{
+                    // Reset to original stats
+                    const orig = originalStats[pId];
+                    if (!orig) return;
+
+                    const dlEl = document.getElementById(`${{pId}}-stat-downloads`);
+                    const pvEl = document.getElementById(`${{pId}}-stat-previews`);
+                    const totalEl = document.getElementById(`${{pId}}-stat-total`);
+                    const filesEl = document.getElementById(`${{pId}}-stat-files`);
+                    const dlUsersEl = document.getElementById(`${{pId}}-stat-dl-users`);
+                    const pvUsersEl = document.getElementById(`${{pId}}-stat-pv-users`);
+                    const ratioEl = document.getElementById(`${{pId}}-stat-ratio`);
+
+                    if (dlEl) dlEl.textContent = formatNumber(orig.downloads);
+                    if (pvEl) pvEl.textContent = formatNumber(orig.previews);
+                    if (totalEl) totalEl.textContent = formatNumber(orig.total);
+                    if (filesEl) filesEl.textContent = formatNumber(orig.files);
+                    if (dlUsersEl) dlUsersEl.textContent = formatNumber(orig.dl_users);
+                    if (pvUsersEl) pvUsersEl.textContent = formatNumber(orig.pv_users);
+                    if (ratioEl) {{
+                        const dlRatio = orig.total > 0 ? Math.round(orig.downloads / orig.total * 100) : 0;
+                        const pvRatio = orig.total > 0 ? Math.round(orig.previews / orig.total * 100) : 0;
+                        ratioEl.textContent = `${{dlRatio}}% / ${{pvRatio}}%`;
+                    }}
+
+                    // Download tab stats
+                    const dlTabDl = document.getElementById(`${{pId}}-dl-stat-downloads`);
+                    const dlTabUsers = document.getElementById(`${{pId}}-dl-stat-users`);
+                    const dlTabFiles = document.getElementById(`${{pId}}-dl-stat-files`);
+                    if (dlTabDl) dlTabDl.textContent = formatNumber(orig.downloads);
+                    if (dlTabUsers) dlTabUsers.textContent = formatNumber(orig.dl_users);
+                    if (dlTabFiles) dlTabFiles.textContent = formatNumber(orig.files);
+
+                    // Preview tab stats
+                    const pvTabPv = document.getElementById(`${{pId}}-pv-stat-previews`);
+                    const pvTabUsers = document.getElementById(`${{pId}}-pv-stat-users`);
+                    const pvTabFiles = document.getElementById(`${{pId}}-pv-stat-files`);
+                    if (pvTabPv) pvTabPv.textContent = formatNumber(orig.previews);
+                    if (pvTabUsers) pvTabUsers.textContent = formatNumber(orig.pv_users);
+                    if (pvTabFiles) pvTabFiles.textContent = formatNumber(orig.files);
+                }}
+            }});
+        }}
+
+        // Store original tooltip callbacks for restoration
+        const originalTooltipCallbacks = {{}};
+
+        // Save original tooltip callbacks after charts are created
+        function saveOriginalTooltips() {{
+            const periods = ['all', 'before', 'after'];
+            const chartTypes = ['monthlyIntegrated', 'dailyIntegrated', 'hourlyIntegrated',
+                               'monthlyDownload', 'dailyDownload', 'hourlyDownload',
+                               'monthlyPreview', 'dailyPreview', 'hourlyPreview'];
+            periods.forEach(pId => {{
+                chartTypes.forEach(type => {{
+                    const key = `${{pId}}-${{type}}`;
+                    const chart = chartInstances[key];
+                    if (chart && chart.options.plugins.tooltip.callbacks) {{
+                        originalTooltipCallbacks[key] = {{...chart.options.plugins.tooltip.callbacks}};
+                    }}
+                }});
+            }});
+        }}
+
+        // Update charts for a specific user
+        function updateCharts(userId) {{
+            const periods = ['all', 'before', 'after'];
+
+            // Get filtered user name for tooltip
+            const filteredUserName = userId ? (userDataByPeriod['all'] && userDataByPeriod['all'][userId] ? userDataByPeriod['all'][userId].name : userId) : null;
+
+            periods.forEach(pId => {{
+                // Get chart data - either user-specific or original
+                let monthlyData, dailyData, hourlyData;
+
+                if (userId && userDataByPeriod[pId] && userDataByPeriod[pId][userId]) {{
+                    const userData = userDataByPeriod[pId][userId];
+                    monthlyData = userData.monthly || {{}};
+                    dailyData = userData.daily || {{}};
+                    hourlyData = userData.hourly || {{}};
+                }} else {{
+                    // Use original data
+                    const orig = originalChartData[pId];
+                    if (!orig) return;
+                    monthlyData = orig.monthly;
+                    dailyData = orig.daily;
+                    hourlyData = orig.hourly;
+                }}
+
+                // Update Integrated charts (combined download + preview)
+                const monthlyIntChart = chartInstances[`${{pId}}-monthlyIntegrated`];
+                if (monthlyIntChart) {{
+                    if (userId && userDataByPeriod[pId] && userDataByPeriod[pId][userId]) {{
+                        // User-specific: get downloads and previews arrays
+                        const labels = Object.keys(monthlyData.downloads || {{}}).sort();
+                        const dlValues = labels.map(l => monthlyData.downloads[l] || 0);
+                        const pvValues = labels.map(l => monthlyData.previews[l] || 0);
+                        monthlyIntChart.data.labels = labels;
+                        monthlyIntChart.data.datasets[0].data = dlValues;
+                        monthlyIntChart.data.datasets[1].data = pvValues;
+                        // Use simple tooltip for filtered view
+                        monthlyIntChart.options.plugins.tooltip.callbacks = {{
+                            title: (ctx) => `${{ctx[0].label}} - ${{filteredUserName}}`,
+                            label: (ctx) => `${{ctx.dataset.label}}: ${{ctx.parsed.y.toLocaleString()}}件`
+                        }};
+                    }} else {{
+                        monthlyIntChart.data.labels = monthlyData.labels;
+                        monthlyIntChart.data.datasets[0].data = monthlyData.downloads;
+                        monthlyIntChart.data.datasets[1].data = monthlyData.previews;
+                        // Restore original tooltip (will use default)
+                        monthlyIntChart.options.plugins.tooltip.callbacks = originalTooltipCallbacks[`${{pId}}-monthlyIntegrated`] || {{}};
+                    }}
+                    monthlyIntChart.update();
+                }}
+
+                const dailyIntChart = chartInstances[`${{pId}}-dailyIntegrated`];
+                if (dailyIntChart) {{
+                    if (userId && userDataByPeriod[pId] && userDataByPeriod[pId][userId]) {{
+                        const labels = Object.keys(dailyData.downloads || {{}}).sort();
+                        const dlValues = labels.map(l => dailyData.downloads[l] || 0);
+                        const pvValues = labels.map(l => dailyData.previews[l] || 0);
+                        dailyIntChart.data.labels = labels;
+                        dailyIntChart.data.datasets[0].data = dlValues;
+                        dailyIntChart.data.datasets[1].data = pvValues;
+                        dailyIntChart.options.plugins.tooltip.callbacks = {{
+                            title: (ctx) => `${{ctx[0].label}} - ${{filteredUserName}}`,
+                            label: (ctx) => `${{ctx.dataset.label}}: ${{ctx.parsed.y.toLocaleString()}}件`
+                        }};
+                    }} else {{
+                        dailyIntChart.data.labels = dailyData.labels;
+                        dailyIntChart.data.datasets[0].data = dailyData.downloads;
+                        dailyIntChart.data.datasets[1].data = dailyData.previews;
+                        dailyIntChart.options.plugins.tooltip.callbacks = originalTooltipCallbacks[`${{pId}}-dailyIntegrated`] || {{}};
+                    }}
+                    dailyIntChart.update();
+                }}
+
+                const hourlyIntChart = chartInstances[`${{pId}}-hourlyIntegrated`];
+                if (hourlyIntChart) {{
+                    if (userId && userDataByPeriod[pId] && userDataByPeriod[pId][userId]) {{
+                        const dlValues = [];
+                        const pvValues = [];
+                        for (let h = 0; h < 24; h++) {{
+                            const hStr = h.toString().padStart(2, '0');
+                            dlValues.push(hourlyData.downloads[hStr] || 0);
+                            pvValues.push(hourlyData.previews[hStr] || 0);
+                        }}
+                        hourlyIntChart.data.datasets[0].data = dlValues;
+                        hourlyIntChart.data.datasets[1].data = pvValues;
+                        hourlyIntChart.options.plugins.tooltip.callbacks = {{
+                            title: (ctx) => `${{ctx[0].label}}時 - ${{filteredUserName}}`,
+                            label: (ctx) => `${{ctx.dataset.label}}: ${{ctx.parsed.y.toLocaleString()}}件`
+                        }};
+                    }} else {{
+                        hourlyIntChart.data.datasets[0].data = hourlyData.downloads;
+                        hourlyIntChart.data.datasets[1].data = hourlyData.previews;
+                        hourlyIntChart.options.plugins.tooltip.callbacks = originalTooltipCallbacks[`${{pId}}-hourlyIntegrated`] || {{}};
+                    }}
+                    hourlyIntChart.update();
+                }}
+
+                // Update Download-only charts
+                const monthlyDlChart = chartInstances[`${{pId}}-monthlyDownload`];
+                if (monthlyDlChart) {{
+                    if (userId && userDataByPeriod[pId] && userDataByPeriod[pId][userId]) {{
+                        const labels = Object.keys(monthlyData.downloads || {{}}).sort();
+                        const values = labels.map(l => monthlyData.downloads[l] || 0);
+                        monthlyDlChart.data.labels = labels;
+                        monthlyDlChart.data.datasets[0].data = values;
+                        monthlyDlChart.options.plugins.tooltip.callbacks = {{
+                            title: (ctx) => `${{ctx[0].label}} - ${{filteredUserName}}`,
+                            label: (ctx) => `ダウンロード: ${{ctx.parsed.y.toLocaleString()}}件`
+                        }};
+                    }} else {{
+                        monthlyDlChart.data.labels = monthlyData.labels;
+                        monthlyDlChart.data.datasets[0].data = monthlyData.downloads;
+                        monthlyDlChart.options.plugins.tooltip.callbacks = originalTooltipCallbacks[`${{pId}}-monthlyDownload`] || {{}};
+                    }}
+                    monthlyDlChart.update();
+                }}
+
+                const dailyDlChart = chartInstances[`${{pId}}-dailyDownload`];
+                if (dailyDlChart) {{
+                    if (userId && userDataByPeriod[pId] && userDataByPeriod[pId][userId]) {{
+                        const labels = Object.keys(dailyData.downloads || {{}}).sort();
+                        const values = labels.map(l => dailyData.downloads[l] || 0);
+                        dailyDlChart.data.labels = labels;
+                        dailyDlChart.data.datasets[0].data = values;
+                        dailyDlChart.options.plugins.tooltip.callbacks = {{
+                            title: (ctx) => `${{ctx[0].label}} - ${{filteredUserName}}`,
+                            label: (ctx) => `ダウンロード: ${{ctx.parsed.y.toLocaleString()}}件`
+                        }};
+                    }} else {{
+                        dailyDlChart.data.labels = dailyData.labels;
+                        dailyDlChart.data.datasets[0].data = dailyData.downloads;
+                        dailyDlChart.options.plugins.tooltip.callbacks = originalTooltipCallbacks[`${{pId}}-dailyDownload`] || {{}};
+                    }}
+                    dailyDlChart.update();
+                }}
+
+                const hourlyDlChart = chartInstances[`${{pId}}-hourlyDownload`];
+                if (hourlyDlChart) {{
+                    if (userId && userDataByPeriod[pId] && userDataByPeriod[pId][userId]) {{
+                        const values = [];
+                        for (let h = 0; h < 24; h++) {{
+                            const hStr = h.toString().padStart(2, '0');
+                            values.push(hourlyData.downloads[hStr] || 0);
+                        }}
+                        hourlyDlChart.data.datasets[0].data = values;
+                        hourlyDlChart.options.plugins.tooltip.callbacks = {{
+                            title: (ctx) => `${{ctx[0].label}}時 - ${{filteredUserName}}`,
+                            label: (ctx) => `ダウンロード: ${{ctx.parsed.y.toLocaleString()}}件`
+                        }};
+                    }} else {{
+                        hourlyDlChart.data.datasets[0].data = hourlyData.downloads;
+                        hourlyDlChart.options.plugins.tooltip.callbacks = originalTooltipCallbacks[`${{pId}}-hourlyDownload`] || {{}};
+                    }}
+                    hourlyDlChart.update();
+                }}
+
+                // Update Preview-only charts
+                const monthlyPvChart = chartInstances[`${{pId}}-monthlyPreview`];
+                if (monthlyPvChart) {{
+                    if (userId && userDataByPeriod[pId] && userDataByPeriod[pId][userId]) {{
+                        const labels = Object.keys(monthlyData.previews || {{}}).sort();
+                        const values = labels.map(l => monthlyData.previews[l] || 0);
+                        monthlyPvChart.data.labels = labels;
+                        monthlyPvChart.data.datasets[0].data = values;
+                        monthlyPvChart.options.plugins.tooltip.callbacks = {{
+                            title: (ctx) => `${{ctx[0].label}} - ${{filteredUserName}}`,
+                            label: (ctx) => `プレビュー: ${{ctx.parsed.y.toLocaleString()}}件`
+                        }};
+                    }} else {{
+                        monthlyPvChart.data.labels = monthlyData.labels;
+                        monthlyPvChart.data.datasets[0].data = monthlyData.previews;
+                        monthlyPvChart.options.plugins.tooltip.callbacks = originalTooltipCallbacks[`${{pId}}-monthlyPreview`] || {{}};
+                    }}
+                    monthlyPvChart.update();
+                }}
+
+                const dailyPvChart = chartInstances[`${{pId}}-dailyPreview`];
+                if (dailyPvChart) {{
+                    if (userId && userDataByPeriod[pId] && userDataByPeriod[pId][userId]) {{
+                        const labels = Object.keys(dailyData.previews || {{}}).sort();
+                        const values = labels.map(l => dailyData.previews[l] || 0);
+                        dailyPvChart.data.labels = labels;
+                        dailyPvChart.data.datasets[0].data = values;
+                        dailyPvChart.options.plugins.tooltip.callbacks = {{
+                            title: (ctx) => `${{ctx[0].label}} - ${{filteredUserName}}`,
+                            label: (ctx) => `プレビュー: ${{ctx.parsed.y.toLocaleString()}}件`
+                        }};
+                    }} else {{
+                        dailyPvChart.data.labels = dailyData.labels;
+                        dailyPvChart.data.datasets[0].data = dailyData.previews;
+                        dailyPvChart.options.plugins.tooltip.callbacks = originalTooltipCallbacks[`${{pId}}-dailyPreview`] || {{}};
+                    }}
+                    dailyPvChart.update();
+                }}
+
+                const hourlyPvChart = chartInstances[`${{pId}}-hourlyPreview`];
+                if (hourlyPvChart) {{
+                    if (userId && userDataByPeriod[pId] && userDataByPeriod[pId][userId]) {{
+                        const values = [];
+                        for (let h = 0; h < 24; h++) {{
+                            const hStr = h.toString().padStart(2, '0');
+                            values.push(hourlyData.previews[hStr] || 0);
+                        }}
+                        hourlyPvChart.data.datasets[0].data = values;
+                        hourlyPvChart.options.plugins.tooltip.callbacks = {{
+                            title: (ctx) => `${{ctx[0].label}}時 - ${{filteredUserName}}`,
+                            label: (ctx) => `プレビュー: ${{ctx.parsed.y.toLocaleString()}}件`
+                        }};
+                    }} else {{
+                        hourlyPvChart.data.datasets[0].data = hourlyData.previews;
+                        hourlyPvChart.options.plugins.tooltip.callbacks = originalTooltipCallbacks[`${{pId}}-hourlyPreview`] || {{}};
+                    }}
+                    hourlyPvChart.update();
+                }}
+            }});
+        }}
+
+        // Filter file rows by user
+        function filterFileRows(userId) {{
+            const fileRows = document.querySelectorAll('.file-row');
+            fileRows.forEach(row => {{
+                if (!userId) {{
+                    row.style.display = '';
+                }} else {{
+                    const userIds = JSON.parse(row.getAttribute('data-user-ids') || '[]');
+                    if (userIds.includes(userId)) {{
+                        row.style.display = '';
+                    }} else {{
+                        row.style.display = 'none';
+                    }}
+                }}
+            }});
+        }}
+
+        // Filter by user (using user_id) - Full filter version
+        function filterByUser(userId) {{
+            currentFilterUser = userId;
+            const filterStatus = document.getElementById('filterStatus');
+
+            // Get all user rows
+            const allRows = document.querySelectorAll('.user-row');
+
+            if (!userId) {{
+                // Show all users
+                filterStatus.textContent = '';
+                allRows.forEach(row => {{
+                    row.classList.remove('user-highlight');
+                }});
+                // Re-apply top 10 display for all periods/tabs
+                allRows.forEach(row => {{
+                    const rank = parseInt(row.getAttribute('data-rank'));
+                    if (rank <= 10) {{
+                        row.classList.add('show');
+                    }} else {{
+                        row.classList.remove('show');
+                    }}
+                }});
+
+                // Reset stats cards
+                updateStatsCards(currentPeriod, null);
+
+                // Reset file rows
+                filterFileRows(null);
+
+                // Reset charts
+                updateCharts(null);
+            }} else {{
+                // Find user name for display
+                const userName = allUsersList.find(([name, id]) => id === userId)?.[0] || userId;
+                filterStatus.textContent = `✓ ${{userName}} でフィルタリング中`;
+
+                // Highlight and show only matching user rows
+                allRows.forEach(row => {{
+                    const rowUserId = row.getAttribute('data-user-id') || '';
+                    if (rowUserId === userId) {{
+                        row.classList.add('show', 'user-highlight');
+                    }} else {{
+                        row.classList.remove('show', 'user-highlight');
+                    }}
+                }});
+
+                // Update stats cards for this user
+                updateStatsCards(currentPeriod, userId);
+
+                // Filter file rows
+                filterFileRows(userId);
+
+                // Update charts for this user
+                updateCharts(userId);
+            }}
+        }}
+
+        // Clear filter
+        function clearUserFilter() {{
+            document.getElementById('userFilter').value = '';
+            filterByUser('');
+        }}
+
         // Initialize: Show first period
         window.addEventListener('DOMContentLoaded', function() {{
+            populateUserDropdown();
             switchPeriod('all');
             initializeTooltips();
+            // Save original tooltip callbacks for restoration when filter is cleared
+            saveOriginalTooltips();
         }});
 
 {all_period_js}
