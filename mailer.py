@@ -217,6 +217,9 @@ class Mailer:
 添付のCSVファイルに詳細情報が記載されています。
 直ちに確認をお願いします。
 
+📊 ダッシュボードで詳細を確認:
+https://box-dashboard-report.pages.dev/
+
 ---
 ⚡ Box Download Report 自動アラート
 """
@@ -242,6 +245,9 @@ class Mailer:
 
 添付のCSVファイルで詳細をご確認ください。
 
+📊 ダッシュボードで詳細を確認:
+https://box-dashboard-report.pages.dev/
+
 ---
 Box Download Report 自動アラート
 """
@@ -253,6 +259,9 @@ Date: {date_str}
 {anomaly_summary}
 
 Please review the attached CSV files for detailed information about the anomalous download activities.
+
+📊 View Dashboard:
+https://box-dashboard-report.pages.dev/
 
 ---
 This is an automated alert from Box Download Report Batch.
