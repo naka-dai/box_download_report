@@ -305,11 +305,25 @@ class AnomalyDetector:
         if not anomalous_users:
             return "No anomalies detected."
 
-        summary_lines = [f"Detected {len(anomalous_users)} anomalous users:"]
+        summary_lines = [f"検知ユーザー数: {len(anomalous_users)}人", ""]
 
         for user_login, data in anomalous_users.items():
             user_name = data.get('user_name', 'Unknown')
             anomaly_types = data.get('anomaly_types', [])
+
+            # Get DL/PV breakdown
+            total_count = data.get('download_count', 0)
+            dl_count = data.get('actual_download_count', 0)
+            pv_count = data.get('preview_count', 0)
+
+            # If breakdown not available, count from events
+            if dl_count == 0 and pv_count == 0 and total_count > 0:
+                events = data.get('events', [])
+                for event in events:
+                    if event.get('event_type') == 'PREVIEW':
+                        pv_count += 1
+                    else:
+                        dl_count += 1
 
             anomaly_descriptions = []
             for anomaly in anomaly_types:
@@ -318,15 +332,19 @@ class AnomalyDetector:
                 threshold = anomaly['threshold']
 
                 if atype == 'download_count':
-                    anomaly_descriptions.append(f"Downloads: {value} (threshold: {threshold})")
+                    anomaly_descriptions.append(f"総アクセス数: {value}（閾値: {threshold}）")
                 elif atype == 'unique_files':
-                    anomaly_descriptions.append(f"Unique files: {value} (threshold: {threshold})")
+                    anomaly_descriptions.append(f"ユニークファイル数: {value}（閾値: {threshold}）")
                 elif atype == 'offhour':
-                    anomaly_descriptions.append(f"Off-hour downloads: {value} (threshold: {threshold})")
+                    anomaly_descriptions.append(f"時間外アクセス: {value}（閾値: {threshold}）")
                 elif atype == 'spike':
                     window = anomaly.get('window_minutes', 'N/A')
-                    anomaly_descriptions.append(f"Spike: {value} downloads in {window} minutes (threshold: {threshold})")
+                    anomaly_descriptions.append(f"スパイク: {window}分間に{value}件（閾値: {threshold}）")
 
-            summary_lines.append(f"  - {user_name} ({user_login}): {', '.join(anomaly_descriptions)}")
+            # Build user summary with DL/PV breakdown
+            summary_lines.append(f"【{user_name}】（{user_login}）")
+            summary_lines.append(f"  ダウンロード: {dl_count}件 / プレビュー: {pv_count}件 / 合計: {total_count}件")
+            summary_lines.append(f"  検知理由: {', '.join(anomaly_descriptions)}")
+            summary_lines.append("")
 
         return '\n'.join(summary_lines)

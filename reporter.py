@@ -238,6 +238,7 @@ class CSVReporter:
             fieldnames = [
                 'anomaly_types',
                 'anomaly_details',
+                'event_type',
                 'user_login',
                 'user_name',
                 'file_id',
@@ -261,9 +262,14 @@ class CSVReporter:
                     except:
                         pass  # そのまま使用
 
+                # event_type を日本語表記に変換
+                event_type = event.get('event_type', 'DOWNLOAD')
+                event_type_display = 'プレビュー' if event_type == 'PREVIEW' else 'ダウンロード'
+
                 writer.writerow({
                     'anomaly_types': event.get('anomaly_types', ''),
                     'anomaly_details': event.get('anomaly_details', ''),
+                    'event_type': event_type_display,
                     'user_login': event.get('user_login', ''),
                     'user_name': event.get('user_name', ''),
                     'file_id': event.get('file_id', ''),

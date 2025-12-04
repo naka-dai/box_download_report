@@ -107,6 +107,8 @@ class DataAggregator:
             'user_login': '',
             'user_name': '',
             'download_count': 0,
+            'actual_download_count': 0,  # DOWNLOAD only
+            'preview_count': 0,          # PREVIEW only
             'unique_files': set(),
             'events': []
         })
@@ -115,11 +117,19 @@ class DataAggregator:
             user_login = event.get('user_login', '')
             user_name = event.get('user_name', '')
             file_id = event.get('file_id', '')
+            event_type = event.get('event_type', 'DOWNLOAD')
 
             if user_login:
                 user_stats[user_login]['user_login'] = user_login
                 user_stats[user_login]['user_name'] = user_name
-                user_stats[user_login]['download_count'] += 1
+                user_stats[user_login]['download_count'] += 1  # Total (DL + PV)
+
+                # Track DL/PV separately
+                if event_type == 'PREVIEW':
+                    user_stats[user_login]['preview_count'] += 1
+                else:
+                    user_stats[user_login]['actual_download_count'] += 1
+
                 if file_id:
                     user_stats[user_login]['unique_files'].add(file_id)
                 user_stats[user_login]['events'].append(event)
@@ -130,7 +140,9 @@ class DataAggregator:
             result[user_login] = {
                 'user_login': stats['user_login'],
                 'user_name': stats['user_name'],
-                'download_count': stats['download_count'],
+                'download_count': stats['download_count'],  # Total (DL + PV)
+                'actual_download_count': stats['actual_download_count'],  # DL only
+                'preview_count': stats['preview_count'],  # PV only
                 'unique_files_count': len(stats['unique_files']),
                 'events': stats['events']
             }
