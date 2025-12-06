@@ -970,16 +970,16 @@ def generate_period_content(period_id, period_name, stats):
                             <button class="toggle-btn" onclick="showTopUsersIntegrated_{period_id}({len(stats['top_users_integrated'])})">すべて ({len(stats['top_users_integrated'])}人)</button>
                         </div>
                     </div>
-                    <table>
+                    <table id="topUsersIntegratedTableContainer_{period_id}">
                         <thead>
                             <tr>
                                 <th style="width: 50px;">順位</th>
                                 <th>ユーザー名</th>
-                                <th style="text-align: right;">ダウンロード</th>
-                                <th style="text-align: right;">プレビュー</th>
-                                <th style="text-align: right;">合計</th>
-                                <th style="text-align: right;">ファイル数</th>
-                                <th style="text-align: right;">重複率</th>
+                                <th class="sortable" data-sort="download" style="text-align: right;" onclick="sortUserTable_{period_id}('integrated', 'download', this)">ダウンロード</th>
+                                <th class="sortable" data-sort="preview" style="text-align: right;" onclick="sortUserTable_{period_id}('integrated', 'preview', this)">プレビュー</th>
+                                <th class="sortable sort-desc" data-sort="total" style="text-align: right;" onclick="sortUserTable_{period_id}('integrated', 'total', this)">合計</th>
+                                <th class="sortable" data-sort="files" style="text-align: right;" onclick="sortUserTable_{period_id}('integrated', 'files', this)">ファイル数</th>
+                                <th class="sortable" data-sort="duplication" style="text-align: right;" onclick="sortUserTable_{period_id}('integrated', 'duplication', this)">重複率</th>
                             </tr>
                         </thead>
                         <tbody id="topUsersIntegratedTable_{period_id}">
@@ -989,7 +989,7 @@ def generate_period_content(period_id, period_name, stats):
         duplication_rate = ((total - files) / total * 100) if total > 0 else 0
         show_class = 'show' if i <= 10 else ''
 
-        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}" data-user-id="{user_id}">
+        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}" data-user-id="{user_id}" data-download="{dl_count}" data-preview="{pv_count}" data-total="{total}" data-files="{files}" data-duplication="{duplication_rate:.2f}">
                                 <td><span class="rank">{i}</span></td>
                                 <td>{name}</td>
                                 <td style="text-align: right;"><span class="badge download">{dl_count:,}</span></td>
@@ -1090,14 +1090,14 @@ def generate_period_content(period_id, period_name, stats):
                             <button class="toggle-btn" onclick="showTopUsersDownload_''' + period_id + f'''({len(stats['top_users_download'])})">すべて ({len(stats['top_users_download'])}人)</button>
                         </div>
                     </div>
-                    <table>
+                    <table id="topUsersDownloadTableContainer_''' + period_id + '''">
                         <thead>
                             <tr>
                                 <th style="width: 50px;">順位</th>
                                 <th>ユーザー名</th>
-                                <th style="text-align: right;">ダウンロード数</th>
-                                <th style="text-align: right;">ユニークファイル</th>
-                                <th style="text-align: right;">重複率</th>
+                                <th class="sortable sort-desc" data-sort="count" style="text-align: right;" onclick="sortUserTable_''' + period_id + '''('download', 'count', this)">ダウンロード数</th>
+                                <th class="sortable" data-sort="files" style="text-align: right;" onclick="sortUserTable_''' + period_id + '''('download', 'files', this)">ファイル数</th>
+                                <th class="sortable" data-sort="duplication" style="text-align: right;" onclick="sortUserTable_''' + period_id + '''('download', 'duplication', this)">重複率</th>
                             </tr>
                         </thead>
                         <tbody id="topUsersDownloadTable_''' + period_id + '''">
@@ -1107,7 +1107,7 @@ def generate_period_content(period_id, period_name, stats):
         duplication_rate = ((count - files) / count * 100) if count > 0 else 0
         show_class = 'show' if i <= 10 else ''
 
-        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}" data-user-id="{user_id}">
+        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}" data-user-id="{user_id}" data-count="{count}" data-files="{files}" data-duplication="{duplication_rate:.2f}">
                                 <td><span class="rank">{i}</span></td>
                                 <td>{name}</td>
                                 <td style="text-align: right; font-weight: bold;">{count:,}</td>
@@ -1202,14 +1202,14 @@ def generate_period_content(period_id, period_name, stats):
                             <button class="toggle-btn" onclick="showTopUsersPreview_''' + period_id + f'''({len(stats['top_users_preview'])})">すべて ({len(stats['top_users_preview'])}人)</button>
                         </div>
                     </div>
-                    <table>
+                    <table id="topUsersPreviewTableContainer_''' + period_id + '''">
                         <thead>
                             <tr>
                                 <th style="width: 50px;">順位</th>
                                 <th>ユーザー名</th>
-                                <th style="text-align: right;">プレビュー数</th>
-                                <th style="text-align: right;">ユニークファイル</th>
-                                <th style="text-align: right;">重複率</th>
+                                <th class="sortable sort-desc" data-sort="count" style="text-align: right;" onclick="sortUserTable_''' + period_id + '''('preview', 'count', this)">プレビュー数</th>
+                                <th class="sortable" data-sort="files" style="text-align: right;" onclick="sortUserTable_''' + period_id + '''('preview', 'files', this)">ファイル数</th>
+                                <th class="sortable" data-sort="duplication" style="text-align: right;" onclick="sortUserTable_''' + period_id + '''('preview', 'duplication', this)">重複率</th>
                             </tr>
                         </thead>
                         <tbody id="topUsersPreviewTable_''' + period_id + '''">
@@ -1219,7 +1219,7 @@ def generate_period_content(period_id, period_name, stats):
         duplication_rate = ((count - files) / count * 100) if count > 0 else 0
         show_class = 'show' if i <= 10 else ''
 
-        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}" data-user-id="{user_id}">
+        html += f'''                            <tr class="user-row {show_class}" data-rank="{i}" data-user-id="{user_id}" data-count="{count}" data-files="{files}" data-duplication="{duplication_rate:.2f}">
                                 <td><span class="rank">{i}</span></td>
                                 <td>{name}</td>
                                 <td style="text-align: right; font-weight: bold;">{count:,}</td>
@@ -1961,6 +1961,89 @@ def generate_period_content(period_id, period_name, stats):
                 }}
             }});
         }}
+
+        // Sort function for user tables
+        function sortUserTable_{period_id}(tableType, sortKey, headerElement) {{
+            // Determine table body ID based on type
+            let tbodyId;
+            if (tableType === 'integrated') {{
+                tbodyId = 'topUsersIntegratedTable_{period_id}';
+            }} else if (tableType === 'download') {{
+                tbodyId = 'topUsersDownloadTable_{period_id}';
+            }} else {{
+                tbodyId = 'topUsersPreviewTable_{period_id}';
+            }}
+
+            const tbody = document.getElementById(tbodyId);
+            if (!tbody) return;
+
+            const rows = Array.from(tbody.querySelectorAll('.user-row'));
+            if (rows.length === 0) return;
+
+            // Determine sort direction
+            const wasDescending = headerElement.classList.contains('sort-desc');
+            const wasAscending = headerElement.classList.contains('sort-asc');
+            const isDescending = wasAscending; // Toggle: if was asc, now desc
+
+            // Remove sort classes from all headers in this table
+            const table = headerElement.closest('table');
+            table.querySelectorAll('th.sortable').forEach(th => {{
+                th.classList.remove('sort-asc', 'sort-desc');
+            }});
+
+            // Add appropriate class to clicked header
+            if (isDescending) {{
+                headerElement.classList.add('sort-desc');
+            }} else {{
+                headerElement.classList.add('sort-asc');
+            }}
+
+            // Sort rows
+            rows.sort((a, b) => {{
+                let aVal, bVal;
+
+                // Get data attribute based on sort key
+                if (tableType === 'integrated') {{
+                    aVal = parseFloat(a.dataset[sortKey] || 0);
+                    bVal = parseFloat(b.dataset[sortKey] || 0);
+                }} else {{
+                    aVal = parseFloat(a.dataset[sortKey] || 0);
+                    bVal = parseFloat(b.dataset[sortKey] || 0);
+                }}
+
+                if (isDescending) {{
+                    return bVal - aVal;
+                }} else {{
+                    return aVal - bVal;
+                }}
+            }});
+
+            // Re-append rows in sorted order and update ranks
+            rows.forEach((row, index) => {{
+                row.dataset.rank = index + 1;
+                row.querySelector('.rank').textContent = index + 1;
+                tbody.appendChild(row);
+            }});
+
+            // Re-apply visibility based on current limit
+            const visibleCount = tbody.querySelectorAll('.user-row.show').length || 10;
+            rows.forEach((row, index) => {{
+                if (currentFilterUser) {{
+                    const rowUserId = row.getAttribute('data-user-id') || '';
+                    if (rowUserId === currentFilterUser) {{
+                        row.classList.add('show', 'user-highlight');
+                    }} else {{
+                        row.classList.remove('show', 'user-highlight');
+                    }}
+                }} else {{
+                    if (index < visibleCount) {{
+                        row.classList.add('show');
+                    }} else {{
+                        row.classList.remove('show');
+                    }}
+                }}
+            }});
+        }}
 '''
 
     return html, js_code
@@ -2336,6 +2419,40 @@ def generate_dashboard():
             font-weight: 600;
             color: #667eea;
             border-bottom: 2px solid #667eea;
+        }}
+
+        th.sortable {{
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            padding-right: 25px;
+        }}
+
+        th.sortable:hover {{
+            background: #e9ecef;
+        }}
+
+        th.sortable::after {{
+            content: '⇅';
+            position: absolute;
+            right: 8px;
+            color: #aaa;
+            font-size: 0.9em;
+        }}
+
+        th.sortable.sort-asc::after {{
+            content: '▲';
+            color: #667eea;
+        }}
+
+        th.sortable.sort-desc::after {{
+            content: '▼';
+            color: #667eea;
+        }}
+
+        th.sortable.sort-asc,
+        th.sortable.sort-desc {{
+            background: #e3e8f8;
         }}
 
         td {{
