@@ -425,6 +425,56 @@ Get-Item "dist\box_daily_update.exe" | Select-Object Name, LastWriteTime, Length
 
 ## トラブルシューティング
 
+### PyInstaller EXE でboxsdkモジュールエラー（2025-12-11解決）
+
+**症状**:
+```
+AttributeError: module 'boxsdk.object' has no attribute 'recent_item'
+ModuleNotFoundError: No module named 'boxsdk'
+```
+
+**原因**: PyInstallerがboxsdkの全サブモジュールを自動的にバンドルできない
+
+**解決方法**: `box_daily_update.spec` に `hiddenimports` を追加
+
+```python
+a = Analysis(
+    ['box_daily_update.py'],
+    datas=[('chart.js', '.')],  # chart.jsも必要
+    hiddenimports=[
+        'boxsdk',
+        'boxsdk.auth',
+        'boxsdk.auth.jwt_auth',
+        'boxsdk.auth.oauth2',
+        'boxsdk.client',
+        'boxsdk.client.client',
+        'boxsdk.object',
+        'boxsdk.object.folder',
+        'boxsdk.object.file',
+        'boxsdk.object.user',
+        'boxsdk.object.recent_item',
+        'boxsdk.object.base_object',
+        'boxsdk.object.base_item',
+        'boxsdk.object.item',
+        'boxsdk.object.events',
+        'boxsdk.object.event',
+    ],
+    ...
+)
+```
+
+**EXE再ビルド手順**:
+```bash
+# specファイルを使用してリビルド
+pyinstaller box_daily_update.spec
+
+# deploymentフォルダにコピー
+cmd /c copy "dist\box_daily_update.exe" "deployment\box_daily_update\box_daily_update.exe"
+
+# タイムスタンプ確認
+Get-Item "dist\box_daily_update.exe", "deployment\box_daily_update\box_daily_update.exe" | Select-Object Name, LastWriteTime, Length
+```
+
 ### Box API 認証エラー
 
 - `config.json` のパスが正しいか確認
